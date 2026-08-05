@@ -24,9 +24,11 @@ import {
   Waypoint,
   JournalNote,
 } from '../types';
-import { FRANCE_MAP_CENTER, FRANCE_MAP_ZOOM, LOCAL_MAP_ZOOM } from '../lib/mapDefaults';
-import { getSleepSpotEmoji, hasValidCoords, sleepSpotBorderColor, toLeafletCoords } from '../lib/mapCoords';
+import { FRANCE_MAP_CENTER, FRANCE_MAP_ZOOM, LOCAL_MAP_ZOOM, readStoredMapTile, saveStoredMapTile, type MapTileMode } from '../lib/mapDefaults';
+import { getSleepSpotEmoji, hasValidCoords, sleepSpotBorderColor, toLeafletCoords, getWaypointEmoji } from '../lib/mapCoords';
+import { isVideoMedia } from '../lib/mediaUtils';
 import { SimpleFormModal } from './SimpleFormModal';
+import { useHistoryBack } from '../lib/historyBack';
 import {
   CompactFormChip,
   CompactFormField,
@@ -75,9 +77,23 @@ const TILE_LAYERS = {
   satellite: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri',
-    name: 'Satellite HD',
+    name: 'Satellite',
   },
 };
+
+function createTileLayer(mode: MapTileMode) {
+  const config = TILE_LAYERS[mode];
+  return L.tileLayer(config.url, {
+    attribution: config.attribution,
+    maxZoom: mode === 'satellite' ? 18 : 19,
+    maxNativeZoom: mode === 'satellite' ? 17 : undefined,
+    keepBuffer: 2,
+    updateWhenIdle: true,
+    updateWhenZooming: false,
+    detectRetina: false,
+    crossOrigin: 'anonymous',
+  });
+}
 
 function getPoiIconConfig(type: PoiType) {
   switch (type) {
@@ -124,7 +140,7 @@ export const MapView: React.FC<MapViewProps> = ({
   const hasFlownToUserRef = useRef(false);
   const onSelectRef = useRef<(sel: MapSelection | null) => void>(() => {});
 
-  const [activeTile, setActiveTile] = useState<'outdoor' | 'topo' | 'satellite'>('satellite');
+  const [activeTile, setActiveTile] = useState<MapTileMode>(() => readStoredMapTile());
   const [selectedPoiTypeFilter, setSelectedPoiTypeFilter] = useState<string>('all');
   const [selectedFriendFilter, setSelectedFriendFilter] = useState<string>('all');
   const [clickCoords, setClickCoords] = useState<{ lat: number; lng: number } | null>(null);
@@ -148,57 +164,72 @@ export const MapView: React.FC<MapViewProps> = ({
     onSelectRef.current = setSelectedFeature;
   }, []);
 
-  // Initialize Leaflet map
+  useHistoryBack(Boolean(selectedFeature), () => setSelectedFeature(null));
+  useHistoryBack(isPickingLocation, () => setIsPickingLocation(false));
+
+  // Initialize Leaflet once — container is visible on first mount (lazy-loaded tab).
   useEffect(() => {
-    if (!mapContainerRef.current) return;
+    if (!mapContainerRef.current || mapRef.current) return;
 
-    if (!mapRef.current) {
-      const initialLat = userLocation?.lat ?? FRANCE_MAP_CENTER.lat;
-      const initialLng = userLocation?.lng ?? FRANCE_MAP_CENTER.lng;
-      const initialZoom = userLocation ? LOCAL_MAP_ZOOM : FRANCE_MAP_ZOOM;
+    const initialLat = userLocation?.lat ?? FRANCE_MAP_CENTER.lat;
+    const initialLng = userLocation?.lng ?? FRANCE_MAP_CENTER.lng;
+    const initialZoom = userLocation ? LOCAL_MAP_ZOOM : FRANCE_MAP_ZOOM;
 
-      const map = L.map(mapContainerRef.current, { zoomControl: false }).setView(
-        [initialLat, initialLng],
-        initialZoom
-      );
+    const map = L.map(mapContainerRef.current, {
+      zoomControl: false,
+      preferCanvas: true,
+      fadeAnimation: false,
+      zoomAnimation: true,
+      tapTolerance: 15,
+      bounceAtZoomLimits: false,
+    }).setView([initialLat, initialLng], initialZoom);
 
-      L.control.zoom({ position: 'bottomleft' }).addTo(map);
+    L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
-      const tileLayer = L.tileLayer(TILE_LAYERS[activeTile].url, {
-        attribution: TILE_LAYERS[activeTile].attribution,
-        maxZoom: 19,
-      }).addTo(map);
+    const tileLayer = createTileLayer(activeTile).addTo(map);
 
-      tileLayerRef.current = tileLayer;
-      layerGroupRef.current = L.layerGroup().addTo(map);
+    tileLayerRef.current = tileLayer;
+    layerGroupRef.current = L.layerGroup().addTo(map);
 
-      map.on('click', (e: L.LeafletMouseEvent) => {
-        if (pickingLocationRef.current) {
-          setClickCoords({ lat: e.latlng.lat, lng: e.latlng.lng });
-          setIsPickingLocation(false);
-          setShowAddModal(true);
-          return;
-        }
-        onSelectRef.current(null);
-      });
+    map.on('click', (e: L.LeafletMouseEvent) => {
+      if (pickingLocationRef.current) {
+        setClickCoords({ lat: e.latlng.lat, lng: e.latlng.lng });
+        setIsPickingLocation(false);
+        setShowAddModal(true);
+        return;
+      }
+      onSelectRef.current(null);
+    });
 
-      mapRef.current = map;
-    }
+    mapRef.current = map;
+    requestAnimationFrame(() => {
+      map.invalidateSize({ animate: false });
+    });
 
     return () => {
-      mapRef.current?.remove();
+      map.remove();
       mapRef.current = null;
+      tileLayerRef.current = null;
+      layerGroupRef.current = null;
     };
   }, []);
 
   useEffect(() => {
+    if (!mapRef.current || !mapVisible) return;
+    const map = mapRef.current;
+    const timer = window.setTimeout(() => {
+      map.invalidateSize({ animate: false });
+      tileLayerRef.current?.redraw?.();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [mapVisible]);
+
+  useEffect(() => {
     if (!mapRef.current) return;
     if (tileLayerRef.current) mapRef.current.removeLayer(tileLayerRef.current);
-    const newTileLayer = L.tileLayer(TILE_LAYERS[activeTile].url, {
-      attribution: TILE_LAYERS[activeTile].attribution,
-      maxZoom: 19,
-    }).addTo(mapRef.current);
+    const newTileLayer = createTileLayer(activeTile).addTo(mapRef.current);
     tileLayerRef.current = newTileLayer;
+    saveStoredMapTile(activeTile);
   }, [activeTile]);
 
   useEffect(() => {
@@ -221,7 +252,7 @@ export const MapView: React.FC<MapViewProps> = ({
     if (!mapRef.current || !userLocation || hasFlownToUserRef.current || focusLocation || !mapVisible) return;
     hasFlownToUserRef.current = true;
     mapRef.current.invalidateSize({ animate: false });
-    mapRef.current.flyTo([userLocation.lat, userLocation.lng], 14, { duration: 1.1 });
+    mapRef.current.flyTo([userLocation.lat, userLocation.lng], 14, { duration: 0.65 });
   }, [userLocation, focusLocation, mapVisible]);
 
   // Auto-select focused spot
@@ -252,48 +283,6 @@ export const MapView: React.FC<MapViewProps> = ({
     if (!mapRef.current || !layerGroupRef.current) return;
     const layerGroup = layerGroupRef.current;
     layerGroup.clearLayers();
-
-    // Waypoint route polyline
-    const sortedWps = [...waypoints]
-      .filter((wp) => hasValidCoords(wp.lat, wp.lng))
-      .sort((a, b) => a.order - b.order);
-    if (sortedWps.length > 1) {
-      const routeCoords: [number, number][] = sortedWps.map((wp) => [wp.lat, wp.lng]);
-      L.polyline(routeCoords, {
-        color: '#eb6c32',
-        weight: 3,
-        opacity: 0.55,
-        dashArray: '8, 12',
-        lineCap: 'round',
-      }).addTo(layerGroup);
-    }
-
-    // Past tracks
-    pastTracks.forEach((track) => {
-      if (track.points && track.points.length > 1) {
-        const coords: [number, number][] = track.points.map((p) => [p.lat, p.lng]);
-        L.polyline(coords, {
-          color: '#64748b',
-          weight: 4,
-          opacity: 0.6,
-          dashArray: '6, 8',
-        })
-          .on('click', () => onSelectRef.current({ type: 'track', id: track.id }))
-          .addTo(layerGroup);
-      }
-    });
-
-    // Active GPS track
-    if (activeTrackPoints.length > 1) {
-      const coords: [number, number][] = activeTrackPoints.map((p) => [p.lat, p.lng]);
-      L.polyline(coords, {
-        color: '#059669',
-        weight: 6,
-        opacity: 0.9,
-        lineCap: 'round',
-        lineJoin: 'round',
-      }).addTo(layerGroup);
-    }
 
     // User GPS marker
     if (userLocation) {
@@ -327,15 +316,9 @@ export const MapView: React.FC<MapViewProps> = ({
 
         const avatarIcon = L.divIcon({
           className: 'map-profile-marker',
-          html: `<div class="profile-marker ${isCurrentUser ? 'profile-marker--current' : ''}" style="--profile-color: ${safeColor}">
-            <div class="profile-marker__pulse"></div>
-            <div class="profile-marker__avatar-wrap">
-              <img src="${friend.avatar}" alt="" class="profile-marker__avatar" />
-              <span class="profile-marker__presence"></span>
-            </div>
-          </div>`,
-          iconSize: [54, 54],
-          iconAnchor: [27, 27],
+          html: `<div class="profile-marker-dot ${isCurrentUser ? 'profile-marker-dot--current' : ''}" style="--profile-color: ${safeColor}" aria-hidden="true"><span class="profile-marker-dot__core"></span></div>`,
+          iconSize: [14, 14],
+          iconAnchor: [7, 7],
         });
 
         L.marker([friend.liveLat, friend.liveLng], { icon: avatarIcon })
@@ -380,11 +363,15 @@ export const MapView: React.FC<MapViewProps> = ({
       if (!hasValidCoords(wp.lat, wp.lng)) return;
       const style = waypointMarkerStyle(wp.status);
 
+      const emoji = getWaypointEmoji(wp);
       const wpIcon = L.divIcon({
         className: 'wp-marker',
-        html: `<div style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;background:${style.bg};color:white;font-weight:900;font-size:11px;border:2px solid ${style.border};box-shadow:0 4px 12px rgba(23,53,43,.2);">${wp.order}</div>`,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14],
+        html: `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:32px;height:32px;border-radius:999px;background:${style.bg};color:white;border:2px solid ${style.border};box-shadow:0 4px 12px rgba(23,53,43,.2);">
+          <span style="font-size:14px;line-height:1;">${emoji}</span>
+          <span style="margin-top:1px;font-size:7px;font-weight:900;line-height:1;opacity:.95;">#${wp.order}</span>
+        </div>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
       });
 
       L.marker([wp.lat, wp.lng], { icon: wpIcon })
@@ -416,19 +403,39 @@ export const MapView: React.FC<MapViewProps> = ({
         .addTo(layerGroup);
     });
 
-    // Photos
+    // Photos & videos (repères seuls, sans tracé d'itinéraire)
     photos.forEach((photo) => {
-      if (!photo.lat || !photo.lng) return;
+      if (!hasValidCoords(photo.lat ?? 0, photo.lng ?? 0)) return;
       if (selectedFriendFilter !== 'all' && photo.friendId !== selectedFriendFilter) return;
 
+      const isVideo = isVideoMedia(photo);
+
+      if (isVideo) {
+        const videoIcon = L.divIcon({
+          className: 'photo-marker',
+          html: `<div style="display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;border:2.5px solid white;box-shadow:0 4px 14px rgba(23,53,43,.22);background:#17352b;color:white;font-size:16px;">🎬</div>`,
+          iconSize: [36, 36],
+          iconAnchor: [18, 18],
+        });
+
+        L.marker([photo.lat!, photo.lng!], { icon: videoIcon })
+          .on('click', (e) => {
+            L.DomEvent.stopPropagation(e);
+            onSelectRef.current({ type: 'photo', id: photo.id });
+          })
+          .addTo(layerGroup);
+        return;
+      }
+
+      const safeUrl = photo.url.replace(/"/g, '&quot;');
       const photoIcon = L.divIcon({
         className: 'photo-marker',
-        html: `<div style="width:32px;height:32px;border-radius:8px;border:2px solid white;box-shadow:0 4px 12px rgba(23,53,43,.18);overflow:hidden;background:#17352b;"><img src="${photo.url}" style="width:100%;height:100%;object-fit:cover;" /></div>`,
-        iconSize: [32, 32],
-        iconAnchor: [16, 16],
+        html: `<div style="width:36px;height:36px;border-radius:10px;border:2.5px solid white;box-shadow:0 4px 14px rgba(23,53,43,.22);overflow:hidden;background:#17352b;"><img src="${safeUrl}" alt="" style="width:100%;height:100%;object-fit:cover;" loading="lazy" /></div>`,
+        iconSize: [36, 36],
+        iconAnchor: [18, 18],
       });
 
-      L.marker([photo.lat, photo.lng], { icon: photoIcon })
+      L.marker([photo.lat!, photo.lng!], { icon: photoIcon })
         .on('click', (e) => {
           L.DomEvent.stopPropagation(e);
           onSelectRef.current({ type: 'photo', id: photo.id });
@@ -458,10 +465,24 @@ export const MapView: React.FC<MapViewProps> = ({
 
     // Focus highlight
     if (focusLocation && hasValidCoords(focusLocation.lat, focusLocation.lng)) {
-      const focusEmoji = focusLocation.emoji || '📍';
+      const matchWp = waypoints.find(
+        (wp) =>
+          hasValidCoords(wp.lat, wp.lng) &&
+          Math.abs(wp.lat - focusLocation.lat) < 0.00001 &&
+          Math.abs(wp.lng - focusLocation.lng) < 0.00001
+      );
+      const focusEmoji =
+        matchWp
+          ? getWaypointEmoji(matchWp)
+          : focusLocation.emoji && !/^\d+$/.test(focusLocation.emoji)
+            ? focusLocation.emoji
+            : '📍';
       const focusIcon = L.divIcon({
         className: 'sleep-spot-focus-marker',
-        html: `<div style="display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:12px;background:#fff;border:3px solid #eb6c32;box-shadow:0 6px 20px rgba(235,108,50,.35);font-size:18px;line-height:1;animation:map-focus-pulse 1.5s ease-in-out infinite;">${focusEmoji}</div>`,
+        html: `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:36px;height:36px;border-radius:12px;background:#fff;border:3px solid #eb6c32;box-shadow:0 6px 20px rgba(235,108,50,.35);animation:map-focus-pulse 1.5s ease-in-out infinite;">
+          <span style="font-size:17px;line-height:1;">${focusEmoji}</span>
+          ${matchWp ? `<span style="margin-top:1px;font-size:8px;font-weight:900;line-height:1;color:#eb6c32;">#${matchWp.order}</span>` : ''}
+        </div>`,
         iconSize: [36, 36],
         iconAnchor: [18, 18],
       });
@@ -597,7 +618,7 @@ export const MapView: React.FC<MapViewProps> = ({
     pois.length +
     waypoints.filter((w) => hasValidCoords(w.lat, w.lng)).length +
     sleepSpots.length +
-    photos.filter((p) => p.lat && p.lng).length +
+    photos.filter((p) => hasValidCoords(p.lat ?? 0, p.lng ?? 0)).length +
     journal.filter((n) => n.lat && n.lng).length;
 
   return (

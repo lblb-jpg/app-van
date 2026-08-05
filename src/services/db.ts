@@ -1,108 +1,37 @@
 import { get, set } from 'idb-keyval';
 import { Friend, GpsTrack, Poi, JournalNote, TripPhoto, Expense, Waypoint } from '../types';
-
-const makeInitialAvatar = (name: string, background: string) =>
-  `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" rx="48" fill="${background}"/><text x="48" y="58" text-anchor="middle" font-family="Arial, sans-serif" font-size="36" font-weight="700" fill="white">${name.slice(0, 1).toUpperCase()}</text></svg>`)}`;
+import { CREW_DEFAULT_AVATARS, CREW_DEFAULT_COLORS } from '../lib/crewAvatars';
 
 // Crew accounts only — all journey data starts empty for a clean deploy.
 export const DEFAULT_FRIENDS: Friend[] = [
   {
     id: 'adel',
     name: 'Adel',
-    avatar: makeInitialAvatar('Adel', '#059669'),
-    color: '#059669',
+    avatar: CREW_DEFAULT_AVATARS.Adel,
+    color: CREW_DEFAULT_COLORS.Adel,
     isCurrentUser: true
   },
   {
     id: 'paul',
     name: 'Paul',
-    avatar: makeInitialAvatar('Paul', '#2563eb'),
-    color: '#2563eb'
+    avatar: CREW_DEFAULT_AVATARS.Paul,
+    color: CREW_DEFAULT_COLORS.Paul
   },
   {
     id: 'yanis',
     name: 'Yanis',
-    avatar: makeInitialAvatar('Yanis', '#9333ea'),
-    color: '#9333ea'
+    avatar: CREW_DEFAULT_AVATARS.Yanis,
+    color: CREW_DEFAULT_COLORS.Yanis
   }
 ];
 
 export const DEFAULT_WAYPOINTS: Waypoint[] = [];
 export const DEFAULT_POIS: Poi[] = [];
 export const DEFAULT_JOURNAL: JournalNote[] = [];
-export const DEFAULT_EXPENSES: Expense[] = [
-  {
-    id: 'exp_demo_1',
-    description: 'Plein essence — Total',
-    amount: 87.5,
-    category: 'carburant',
-    date: '2026-08-01',
-    paidByFriendId: 'adel',
-    splitAmongFriendIds: ['adel', 'paul', 'yanis'],
-    splitType: 'equal',
-    currency: 'EUR',
-  },
-  {
-    id: 'exp_demo_2',
-    description: 'Courses Intermarché',
-    amount: 64.2,
-    category: 'courses',
-    date: '2026-08-02',
-    paidByFriendId: 'paul',
-    splitAmongFriendIds: ['adel', 'paul', 'yanis'],
-    splitType: 'equal',
-    currency: 'EUR',
-  },
-  {
-    id: 'exp_demo_3',
-    description: 'Péage A71',
-    amount: 18.4,
-    category: 'peage',
-    date: '2026-08-02',
-    paidByFriendId: 'yanis',
-    splitAmongFriendIds: ['adel', 'paul', 'yanis'],
-    splitType: 'equal',
-    currency: 'EUR',
-  },
-  {
-    id: 'exp_demo_4',
-    description: 'Resto du port — Arcachon',
-    amount: 72.0,
-    category: 'resto',
-    date: '2026-08-03',
-    paidByFriendId: 'adel',
-    splitAmongFriendIds: ['adel', 'paul', 'yanis'],
-    splitType: 'equal',
-    currency: 'EUR',
-  },
-  {
-    id: 'exp_demo_5',
-    description: 'Location paddle',
-    amount: 45.0,
-    category: 'activite',
-    date: '2026-08-03',
-    paidByFriendId: 'paul',
-    splitAmongFriendIds: ['paul', 'yanis'],
-    splitType: 'equal',
-    currency: 'EUR',
-    notes: 'Adel n’a pas participé',
-  },
-  {
-    id: 'exp_demo_6',
-    description: 'Bouteille gaz + adaptateur',
-    amount: 32.9,
-    category: 'autre',
-    date: '2026-08-04',
-    paidByFriendId: 'yanis',
-    splitAmongFriendIds: ['adel', 'paul', 'yanis'],
-    splitType: 'equal',
-    currency: 'EUR',
-  },
-];
+export const DEFAULT_EXPENSES: Expense[] = [];
 export const DEFAULT_PHOTOS: TripPhoto[] = [];
 export const DEFAULT_TRACKS: GpsTrack[] = [];
 
-const DEMO_EXPENSES_SEEDED_KEY = 'van_expenses_demo_seeded_v1';
 
 // IDB Keys
 const KEYS = {
@@ -156,16 +85,7 @@ export const dbService = {
   getJournal: () => loadData<JournalNote[]>(KEYS.JOURNAL, []),
   saveJournal: (notes: JournalNote[]) => saveData(KEYS.JOURNAL, notes),
 
-  getExpenses: async () => {
-    const expenses = await loadData<Expense[]>(KEYS.EXPENSES, []);
-    const demoSeeded = await get<boolean>(DEMO_EXPENSES_SEEDED_KEY);
-    if (!expenses.length && !demoSeeded && DEFAULT_EXPENSES.length) {
-      await saveData(KEYS.EXPENSES, DEFAULT_EXPENSES);
-      await set(DEMO_EXPENSES_SEEDED_KEY, true);
-      return DEFAULT_EXPENSES;
-    }
-    return expenses;
-  },
+  getExpenses: () => loadData<Expense[]>(KEYS.EXPENSES, []),
   saveExpenses: (expenses: Expense[]) => saveData(KEYS.EXPENSES, expenses),
 
   getPhotos: () => loadData<TripPhoto[]>(KEYS.PHOTOS, []),

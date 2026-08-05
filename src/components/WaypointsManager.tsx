@@ -12,11 +12,9 @@ import {
   ImagePlus,
 } from 'lucide-react';
 import { Waypoint } from '../types';
-import { FRANCE_MAP_CENTER } from '../lib/mapDefaults';
-import { hasValidCoords } from '../lib/mapCoords';
+import { getWaypointEmoji, hasValidCoords } from '../lib/mapCoords';
 import { SimpleFormModal } from './SimpleFormModal';
 import {
-  CompactFormChip,
   CompactFormField,
   CompactFormHero,
   CompactFormRoot,
@@ -24,6 +22,7 @@ import {
   CompactFormTextInput,
   FormModalFooter,
 } from './CompactFormLayout';
+import { PlaceAutocompleteInput } from './PlaceAutocompleteInput';
 
 const withoutSource = (notes?: string) =>
   notes
@@ -31,14 +30,6 @@ const withoutSource = (notes?: string) =>
     .trim() || '';
 
 const MAX_WAYPOINT_PHOTOS = 6;
-
-const AMENITY_OPTIONS = [
-  { id: 'eau', label: '🚰 Eau' },
-  { id: 'ombre', label: '🌲 Ombre' },
-  { id: 'gratuit', label: '🆓 Gratuit' },
-  { id: 'wc', label: '🚽 WC' },
-  { id: 'douche', label: '🚿 Douche' },
-] as const;
 
 async function fileToWaypointPhotoDataUrl(file: File, maxSize = 1280): Promise<string> {
   const objectUrl = URL.createObjectURL(file);
@@ -89,7 +80,6 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
   const [notes, setNotes] = useState('');
-  const [amenities, setAmenities] = useState<string[]>([]);
   const [photos, setPhotos] = useState<string[]>([]);
   const [photoError, setPhotoError] = useState('');
   const photoInputRef = useRef<HTMLInputElement>(null);
@@ -100,7 +90,6 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
     setNotes('');
     setPhotos([]);
     setPhotoError('');
-    setAmenities([]);
     setLat('');
     setLng('');
   };
@@ -133,22 +122,9 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
       lng: hasCoords ? parsedLng : 0,
       status: 'upcoming',
       notes: notes.trim() || undefined,
-      amenities: amenities.length ? amenities : undefined,
       photos: photos.length ? photos : undefined,
     });
 
-    closeAddModal();
-  };
-
-  const pickOnMap = () => {
-    const parsedLat = parseFloat(lat);
-    const parsedLng = parseFloat(lng);
-    if (Number.isFinite(parsedLat) && Number.isFinite(parsedLng) && hasValidCoords(parsedLat, parsedLng)) {
-      onSelectOnMap(parsedLat, parsedLng, title.trim() || locationName.trim(), '📍');
-      closeAddModal();
-      return;
-    }
-    onSelectOnMap(FRANCE_MAP_CENTER.lat, FRANCE_MAP_CENTER.lng, title.trim() || locationName.trim(), '📍');
     closeAddModal();
   };
 
@@ -177,14 +153,6 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
       setPhotoError(files.length > remaining ? `Seules ${remaining} photo(s) ajoutée(s).` : '');
     } catch {
       setPhotoError('Impossible de lire une des photos.');
-    }
-  };
-
-  const toggleAmenity = (item: string) => {
-    if (amenities.includes(item)) {
-      setAmenities(amenities.filter((a) => a !== item));
-    } else {
-      setAmenities([...amenities, item]);
     }
   };
 
@@ -232,7 +200,7 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
       </div>
 
       {/* Waypoints Timeline List */}
-      <div className="space-y-3">
+      <div className="waypoint-list">
         {sortedWaypoints.length === 0 ? (
           <div className="bg-white rounded-[2rem] p-8 text-center text-zinc-400 border border-zinc-200 text-xs font-medium">
             Aucune étape configurée. Ajoutez votre première étape pour démarrer l’itinéraire.
@@ -242,97 +210,104 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
             const isDone = wp.status === 'done';
             const isActive = wp.status === 'active';
             const isExpanded = expandedWaypointId === wp.id || (expandedWaypointId === null && isActive);
-            const statusLabel = isDone ? 'Visité' : isActive ? 'En cours' : 'À venir';
             const visibleNotes = withoutSource(wp.notes);
+            const emoji = getWaypointEmoji(wp);
+            const cardTone = isActive ? 'active' : isDone ? 'done' : 'upcoming';
 
             return (
               <div
                 key={wp.id}
-                className={`rounded-[1.75rem] border transition-all relative overflow-hidden bg-white shadow-sm ${
-                  isActive
-                    ? 'border-emerald-400 ring-2 ring-emerald-500/15 shadow-emerald-950/5'
-                    : isDone
-                    ? 'border-zinc-200'
-                    : 'border-zinc-200 hover:border-zinc-300'
-                }`}
+                className={`waypoint-card waypoint-card--${cardTone}`}
               >
-                <div className="p-3.5 sm:p-4 flex items-start justify-between gap-2.5">
-                  <div className="flex min-w-0 flex-1 items-start gap-2.5">
-                    {/* Badge Order Circle */}
-                    <div
-                      className={`w-9 h-9 rounded-2xl flex items-center justify-center font-black text-xs shrink-0 font-mono ${
-                        isActive
-                          ? 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-200'
-                          : isDone
-                          ? 'bg-zinc-200 text-zinc-600'
-                          : 'bg-zinc-100 text-zinc-800 border border-zinc-200'
-                      }`}
-                    >
-                      {wp.order}
-                    </div>
+                <div className="waypoint-card__accent" aria-hidden />
 
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-extrabold text-[15px] leading-tight text-zinc-900 truncate max-w-full">
-                          {wp.title}
-                        </h3>
-                        <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : isDone ? 'bg-zinc-100 text-zinc-600' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>
-                          {isActive ? '● ' : isDone ? '✓ ' : '• '}{statusLabel}
-                        </span>
-                      </div>
-
-                      <p className="text-xs text-zinc-500 font-medium flex items-center gap-1 mt-0.5 min-w-0">
-                        <MapPin className="w-3.5 h-3.5 shrink-0 text-zinc-400" />
-                        <span className="truncate">{wp.locationName}</span>
-                      </p>
-
-                      <div className="mt-2 flex items-center gap-2 flex-wrap">
-                        {wp.vanSpotType && (
-                          <div className="inline-block text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
-                            🚐 {wp.vanSpotType}
-                          </div>
-                        )}
-                        {wp.photos && wp.photos.length > 0 && (
-                          <div className="inline-flex items-center gap-1.5">
-                            <img
-                              src={wp.photos[0]}
-                              alt=""
-                              className="w-7 h-7 rounded-lg object-cover border border-zinc-200"
-                            />
-                            <span className="text-[10px] font-bold text-zinc-500">
-                              {wp.photos.length} photo{wp.photos.length > 1 ? 's' : ''}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                <div className="waypoint-card__inner">
+                  <div className="waypoint-card__badge" aria-hidden>
+                    <span className="waypoint-card__emoji">{emoji}</span>
+                    <span className="waypoint-card__order">#{wp.order}</span>
                   </div>
 
-                  {/* Actions & Up/Down Ordering */}
-                  <div className="flex flex-col items-end gap-1.5 shrink-0">
-                    {hasValidCoords(wp.lat, wp.lng) && (
+                  <div className="waypoint-card__main">
+                    <div className="waypoint-card__head">
+                      <h3 className="waypoint-card__title">{wp.title}</h3>
+                    </div>
+
+                    <p className="waypoint-card__location">
+                      <MapPin className="w-3 h-3 shrink-0 text-zinc-400" />
+                      <span>{wp.locationName}</span>
+                    </p>
+
+                    {(wp.vanSpotType || (wp.photos && wp.photos.length > 0)) && (
+                      <div className="waypoint-card__meta">
+                        {wp.vanSpotType && (
+                          <span className="waypoint-card__tag">🚐 {wp.vanSpotType}</span>
+                        )}
+                        {wp.photos && wp.photos.length > 0 && (
+                          <span className="waypoint-card__photo-count">
+                            📷 {wp.photos.length} photo{wp.photos.length > 1 ? 's' : ''}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {wp.photos && wp.photos.length > 0 && (
+                    <img
+                      src={wp.photos[0]}
+                      alt=""
+                      className="waypoint-card__thumb"
+                    />
+                  )}
+
+                  <div className="waypoint-card__status-row">
                     <button
                       type="button"
-                      onClick={() => onSelectOnMap(wp.lat, wp.lng, wp.title, `${wp.order}`)}
-                      className="touch-target flex items-center justify-center rounded-xl bg-zinc-900 text-white hover:bg-zinc-800 transition-colors"
-                      title={`Voir ${wp.title} sur la carte`}
-                      aria-label={`Voir ${wp.title} sur la carte`}
+                      onClick={() => onUpdateWaypointStatus(wp.id, 'done')}
+                      className={`waypoint-card__status-btn ${isDone ? 'is-selected is-done' : ''}`}
                     >
-                      <Navigation className="w-3.5 h-3.5 text-emerald-400" />
+                      Fait
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateWaypointStatus(wp.id, 'active')}
+                      className={`waypoint-card__status-btn ${isActive ? 'is-selected is-active' : ''}`}
+                    >
+                      Actif
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateWaypointStatus(wp.id, 'upcoming')}
+                      className={`waypoint-card__status-btn ${wp.status === 'upcoming' ? 'is-selected is-upcoming' : ''}`}
+                    >
+                      À venir
+                    </button>
+                  </div>
+
+                  <div className="waypoint-card__actions">
+                    {hasValidCoords(wp.lat, wp.lng) && (
+                      <button
+                        type="button"
+                        onClick={() => onSelectOnMap(wp.lat, wp.lng, wp.title, emoji)}
+                        className="waypoint-card__action waypoint-card__action--map"
+                        title={`Voir ${wp.title} sur la carte`}
+                      >
+                        <Navigation className="w-3.5 h-3.5 text-emerald-400" />
+                        Voir sur la carte
+                      </button>
                     )}
                     <button
                       type="button"
                       onClick={() => setExpandedWaypointId(isExpanded ? null : wp.id)}
-                      className="touch-target flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 transition-colors"
+                      className={`waypoint-card__action waypoint-card__action--toggle ${isExpanded ? 'is-open' : ''}`}
                       aria-label={isExpanded ? `Réduire ${wp.title}` : `Afficher les détails de ${wp.title}`}
                     >
-                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                      <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                     </button>
                   </div>
                 </div>
 
-                {isExpanded && <div className="px-4 pb-4 space-y-3">
+                {isExpanded && (
+                  <div className="waypoint-card__details space-y-3">
                   {wp.photos && wp.photos.length > 0 && (
                     <div className="grid grid-cols-3 gap-1.5">
                       {wp.photos.map((src, photoIndex) => (
@@ -359,38 +334,6 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                       ))}
                     </div>
                   )}
-                  <div className="pt-3 border-t border-zinc-100 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Mettre à jour</span>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => onUpdateWaypointStatus(wp.id, 'done')}
-                      className={`touch-chip px-3 py-2 rounded-full text-[10px] font-bold ${
-                        isDone ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
-                      }`}
-                      >
-                      Fait
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onUpdateWaypointStatus(wp.id, 'active')}
-                      className={`touch-chip px-3 py-2 rounded-full text-[10px] font-bold ${
-                        isActive ? 'bg-emerald-600 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
-                      }`}
-                      >
-                      Actif
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onUpdateWaypointStatus(wp.id, 'upcoming')}
-                      className={`touch-chip px-3 py-2 rounded-full text-[10px] font-bold ${
-                        wp.status === 'upcoming' ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
-                      }`}
-                      >
-                      À venir
-                    </button>
-                  </div>
-                  </div>
                   <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
                       Organisation
@@ -425,7 +368,8 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                       </button>
                     </div>
                   </div>
-                </div>}
+                  </div>
+                )}
               </div>
             );
           })
@@ -462,12 +406,17 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
               />
             </CompactFormField>
             <CompactFormField label="Lieu *" tone="hero">
-              <CompactFormTextInput
+              <PlaceAutocompleteInput
                 tone="hero"
                 required
                 placeholder="Ville, spot, adresse…"
                 value={locationName}
-                onChange={(e) => setLocationName(e.target.value)}
+                onChange={setLocationName}
+                onSelectPlace={(place) => {
+                  setLocationName(place.name);
+                  setLat(String(place.lat));
+                  setLng(String(place.lng));
+                }}
               />
             </CompactFormField>
           </CompactFormHero>
@@ -480,53 +429,6 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                 onChange={(e) => setNotes(e.target.value)}
               />
             </CompactFormField>
-
-            <div>
-              <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="text-[9px] font-bold uppercase tracking-wider text-[#68756d]">
-                  GPS (optionnel)
-                </span>
-                <button
-                  type="button"
-                  onClick={pickOnMap}
-                  className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-700 hover:underline"
-                >
-                  <Navigation className="h-3 w-3" />
-                  Carte
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                <CompactFormTextInput
-                  inputMode="decimal"
-                  placeholder="Lat."
-                  value={lat}
-                  onChange={(e) => setLat(e.target.value)}
-                />
-                <CompactFormTextInput
-                  inputMode="decimal"
-                  placeholder="Lng."
-                  value={lng}
-                  onChange={(e) => setLng(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div>
-              <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-[#68756d]">
-                Commodités
-              </span>
-              <div className="flex flex-wrap gap-1">
-                {AMENITY_OPTIONS.map((item) => (
-                  <CompactFormChip
-                    key={item.id}
-                    active={amenities.includes(item.id)}
-                    onClick={() => toggleAmenity(item.id)}
-                  >
-                    {item.label}
-                  </CompactFormChip>
-                ))}
-              </div>
-            </div>
 
             <div>
               <div className="mb-1 flex items-center justify-between">

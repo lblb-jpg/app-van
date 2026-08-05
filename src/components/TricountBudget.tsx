@@ -5,14 +5,13 @@ import {
   Plus,
   ArrowRightLeft,
   CheckCircle2,
-  Wallet,
   X,
-  Search,
   Pencil,
   BarChart3,
   List,
   Minus,
-  ChevronRight,
+  Trash2,
+  Users,
 } from 'lucide-react';
 import { Expense, ExpenseCategory, Friend, DebtSettlement, SplitType } from '../types';
 import { SimpleFormModal } from './SimpleFormModal';
@@ -47,9 +46,10 @@ interface TricountBudgetProps {
   onAddExpense: (newExpense: Omit<Expense, 'id'>) => void;
   onUpdateExpense: (id: string, data: Omit<Expense, 'id'>) => void;
   onDeleteExpense: (id: string) => void;
+  onClearAllExpenses: () => void | Promise<void>;
 }
 
-type VanPayTab = 'expenses' | 'balances' | 'stats';
+type VanPayTab = 'expenses' | 'balances' | 'people' | 'stats';
 
 const CATEGORIES: { id: ExpenseCategory; label: string; emoji: string }[] = [
   { id: 'carburant', label: 'Carburant', emoji: '⛽' },
@@ -146,6 +146,21 @@ function personBalanceHint(balance: number) {
   return 'Équilibré';
 }
 
+function getPersonExpenseLines(friendId: string, expenses: Expense[], friendIds: string[]) {
+  return expenses
+    .flatMap((expense) => {
+      const participants = getParticipants(expense, friendIds);
+      if (!participants.includes(friendId)) return [];
+      const amounts = getParticipantAmounts(expense, friendIds);
+      return [{
+        expense,
+        isPayer: expense.paidByFriendId === friendId,
+        personAmount: amounts[friendId] ?? 0,
+      }];
+    })
+    .sort((a, b) => b.expense.date.localeCompare(a.expense.date));
+}
+
 function getCategoryIcon(cat: ExpenseCategory) {
   return CATEGORIES.find((item) => item.id === cat)?.emoji ?? '📦';
 }
@@ -165,13 +180,14 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
   onAddExpense,
   onUpdateExpense,
   onDeleteExpense,
+  onClearAllExpenses,
 }) => {
   const [activeTab, setActiveTab] = useState<VanPayTab>('expenses');
-  const [searchQuery, setSearchQuery] = useState('');
   const [showFormModal, setShowFormModal] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [detailExpense, setDetailExpense] = useState<Expense | null>(null);
   const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null);
+  const [isClearingExpenses, setIsClearingExpenses] = useState(false);
 
   const [desc, setDesc] = useState('');
   const [amount, setAmount] = useState('');
@@ -303,21 +319,7 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
     Number.isFinite(parsedAmount) && parsedAmount > 0 && splitWith.length > 0 && Boolean(paidBy);
 
   const settlementExpenses = normalizedExpenses.filter(isSettlementExpense);
-  const recentSettlementExpenses = settlementExpenses.slice(0, 3);
   const regularExpenses = normalizedExpenses.filter((expense) => !isSettlementExpense(expense));
-
-  const filteredExpenses = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return regularExpenses;
-    return regularExpenses.filter((expense) => {
-      const payer = friendById[expense.paidByFriendId]?.name?.toLowerCase() ?? '';
-      return (
-        expenseDescription(expense).toLowerCase().includes(query) ||
-        payer.includes(query) ||
-        expense.category.includes(query)
-      );
-    });
-  }, [regularExpenses, searchQuery, friendById]);
 
   const totalSpent = regularExpenses.reduce((acc, curr) => acc + curr.amount, 0);
   const totalPerPerson = friends.length > 0 ? totalSpent / friends.length : 0;
@@ -358,6 +360,32 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
 
   const displayName = (id: string) =>
     id === currentFriendId ? 'Moi' : friendById[id]?.name || 'Équipier';
+
+  const handleClearAllExpenses = async () => {
+    if (isClearingExpenses) return;
+    if (
+      !window.confirm(
+        'Supprimer toutes les dépenses VanPay ?\n\nCette action remet les soldes et le total à zéro pour tout l’équipage.'
+      )
+    ) {
+      return;
+    }
+    if (
+      !window.confirm(
+        'Dernière confirmation : effacer définitivement toutes les dépenses ?\n\nCette action ne peut pas être annulée.'
+      )
+    ) {
+      return;
+    }
+    setIsClearingExpenses(true);
+    try {
+      await onClearAllExpenses();
+    } finally {
+      setIsClearingExpenses(false);
+    }
+  };
+
+  const hasAnyExpenses = regularExpenses.length + settlementExpenses.length > 0;
 
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -474,6 +502,7 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
   const tabs: { id: VanPayTab; label: string; icon: React.ReactNode }[] = [
     { id: 'expenses', label: 'Dépenses', icon: <List className="w-3.5 h-3.5" /> },
     { id: 'balances', label: 'Soldes', icon: <ArrowRightLeft className="w-3.5 h-3.5" /> },
+    { id: 'people', label: 'Par pers.', icon: <Users className="w-3.5 h-3.5" /> },
     { id: 'stats', label: 'Stats', icon: <BarChart3 className="w-3.5 h-3.5" /> },
   ];
 
@@ -486,13 +515,27 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
           <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1 font-mono">
             <Receipt className="w-4 h-4 shrink-0" /> VanPay
           </span>
-          <button
-            type="button"
-            onClick={openAddModal}
-            className="relative z-10 min-h-10 px-3.5 py-2 rounded-2xl bg-white hover:bg-zinc-100 text-zinc-900 font-extrabold text-xs shadow-xs transition-all flex items-center gap-1"
-          >
-            <Plus className="w-4 h-4 text-emerald-600" /> Dépense
-          </button>
+          <div className="flex items-center gap-1.5">
+            {hasAnyExpenses && (
+              <button
+                type="button"
+                onClick={() => void handleClearAllExpenses()}
+                disabled={isClearingExpenses}
+                className="relative z-10 min-h-10 px-3 py-2 rounded-2xl bg-red-950/50 hover:bg-red-900/60 text-red-200 font-bold text-[10px] transition-all flex items-center gap-1 disabled:opacity-50 ring-1 ring-red-400/25"
+                title="Supprimer toutes les dépenses"
+              >
+                <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                <span>Supprimer tout</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={openAddModal}
+              className="relative z-10 min-h-10 px-3.5 py-2 rounded-2xl bg-white hover:bg-zinc-100 text-zinc-900 font-extrabold text-xs shadow-xs transition-all flex items-center gap-1"
+            >
+              <Plus className="w-4 h-4 text-emerald-600" /> Dépense
+            </button>
+          </div>
         </div>
 
         <div className="my-2 relative z-10">
@@ -527,104 +570,44 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
             key={tab.id}
             type="button"
             onClick={() => setActiveTab(tab.id)}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2.5 text-[11px] font-extrabold transition-all ${
+            className={`flex flex-1 items-center justify-center gap-1 rounded-xl py-2.5 text-[10px] font-extrabold transition-all sm:gap-1.5 sm:text-[11px] ${
               activeTab === tab.id
                 ? 'bg-white text-zinc-900 shadow-xs'
                 : 'text-zinc-500 hover:text-zinc-700'
             }`}
           >
             {tab.icon}
-            {tab.label}
+            <span className="truncate">{tab.label}</span>
           </button>
         ))}
       </div>
 
       {activeTab === 'expenses' && (
-        <>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-            <input
-              type="search"
-              placeholder="Rechercher une dépense…"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-2xl border border-zinc-200 bg-white py-3 pl-10 pr-4 text-xs font-medium text-zinc-900 placeholder:text-zinc-400 focus:border-emerald-500 focus:outline-hidden"
-            />
-          </div>
-
-          <div className="bg-white border border-zinc-200 rounded-[1.75rem] p-4 shadow-xs space-y-3 sm:rounded-[2rem] sm:p-5">
-            <h3 className="font-extrabold text-sm text-zinc-900">
-              Historique ({filteredExpenses.length})
-            </h3>
-
-            {filteredExpenses.length === 0 ? (
-              <div className="py-6 text-center space-y-3">
-                <p className="text-zinc-400 text-xs font-medium">
-                  {searchQuery ? 'Aucun résultat.' : 'Aucune dépense pour l’instant.'}
-                </p>
-                {!searchQuery && (
-                  <button
-                    type="button"
-                    onClick={openAddModal}
-                    className="inline-flex min-h-11 items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-zinc-900 text-white text-xs font-bold"
-                  >
-                    <Plus className="w-4 h-4 text-emerald-400" /> Ajouter
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {filteredExpenses.map((exp) => {
-                  const payer = friendById[exp.paidByFriendId];
-                  const participants = getParticipants(exp, friendIds);
-                  const amounts = getParticipantAmounts(exp, friendIds);
-                  const symbol = currencySymbol(exp.currency);
-
-                  return (
-                    <button
-                      key={exp.id}
-                      type="button"
-                      onClick={() => setDetailExpense(exp)}
-                      className="w-full p-3 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-2 text-left hover:border-emerald-200 hover:bg-emerald-50/30 transition-colors"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                          <div className="w-8 h-8 shrink-0 rounded-xl bg-zinc-200 text-zinc-700 flex items-center justify-center font-bold">
-                            {getCategoryIcon(exp.category)}
-                          </div>
-                          <div className="min-w-0">
-                            <h4 className="font-bold text-xs text-zinc-900 truncate">
-                              {expenseDescription(exp)}
-                            </h4>
-                            <p className="text-[10px] text-zinc-500 font-medium truncate">
-                              Payé par <strong style={{ color: payer?.color }}>{payer?.name}</strong>
-                              <span className="font-mono"> · {exp.date}</span>
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-1">
-                          <span className="text-sm font-black text-zinc-900 font-mono tabular-nums">
-                            {exp.amount.toFixed(2)} {symbol}
-                          </span>
-                          <ChevronRight className="w-4 h-4 text-zinc-300" />
-                        </div>
-                      </div>
-                      <p className="text-[10px] font-semibold text-zinc-500">
-                        {splitTypeLabel(exp.splitType)} · {participants.length} participant
-                        {participants.length > 1 ? 's' : ''}
-                        {exp.splitType === 'custom' || exp.splitType === 'shares'
-                          ? ` · ${Object.values(amounts)
-                              .map((v) => v.toFixed(2))
-                              .join(' / ')} ${symbol}`
-                          : ` · ${(amounts[participants[0]] ?? 0).toFixed(2)} ${symbol} / pers.`}
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
+        <div className="bg-white border border-zinc-200 rounded-[1.75rem] p-8 text-center shadow-xs sm:rounded-[2rem] space-y-3">
+          <p className="text-xs font-medium text-zinc-400">
+            L’historique des dépenses est désactivé pour le moment.
+          </p>
+          <div className="flex flex-col items-center gap-2 sm:flex-row sm:justify-center">
+            <button
+              type="button"
+              onClick={openAddModal}
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-2xl bg-zinc-900 px-4 py-2.5 text-xs font-bold text-white"
+            >
+              <Plus className="w-4 h-4 text-emerald-400" /> Ajouter une dépense
+            </button>
+            {hasAnyExpenses && (
+              <button
+                type="button"
+                onClick={() => void handleClearAllExpenses()}
+                disabled={isClearingExpenses}
+                className="inline-flex min-h-11 items-center gap-1.5 rounded-2xl border border-red-200 bg-red-50 px-4 py-2.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                Supprimer toutes les dépenses
+              </button>
             )}
           </div>
-        </>
+        </div>
       )}
 
       {activeTab === 'balances' && (
@@ -703,111 +686,145 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
               </div>
             )}
           </div>
+        </>
+      )}
 
-          {settlementExpenses.length > 0 && (
-            <div className="bg-emerald-50/70 border border-emerald-200 rounded-[1.75rem] p-4 shadow-xs space-y-3 sm:rounded-[2rem] sm:p-5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="min-w-0 font-extrabold text-sm text-emerald-950 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" /> Paiements effectués
-                </h3>
-                <span className="shrink-0 text-[10px] font-bold text-emerald-700 bg-white/70 px-2.5 py-1 rounded-full ring-1 ring-emerald-200">
-                  {settlementExpenses.length > 3
-                    ? '3 dernières'
-                    : `${settlementExpenses.length} réglé(s)`}
-                </span>
-              </div>
-              <div className="space-y-2">
-                {recentSettlementExpenses.map((payment) => {
-                  const debtor = friends.find((friend) => friend.id === payment.paidByFriendId);
-                  const creditor = friends.find(
-                    (friend) => friend.id === payment.splitAmongFriendIds[0]
-                  );
-                  return (
-                    <div
-                      key={payment.id}
-                      className="rounded-2xl border border-emerald-200 bg-white/75 p-3"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-xs font-extrabold text-emerald-950 truncate">
-                            {debtor?.name || 'Équipier'} → {creditor?.name || 'équipier'}
-                          </p>
-                          <p className="mt-0.5 text-[10px] font-semibold text-emerald-700">
-                            Payé le {payment.date}
-                          </p>
+      {activeTab === 'people' && (
+        <div className="space-y-3">
+          {personStats.length === 0 ? (
+            <div className="bg-white border border-zinc-200 rounded-[1.75rem] p-8 text-center shadow-xs sm:rounded-[2rem]">
+              <p className="text-xs font-medium text-zinc-400">Aucune dépense à répartir.</p>
+            </div>
+          ) : (
+            personStats.map(({ friend, paid, share, balance }) => {
+              const isCreditor = balance >= -0.005;
+              const name = friend.id === currentFriendId ? `Moi (${friend.name})` : friend.name;
+              const lines = getPersonExpenseLines(friend.id, regularExpenses, friendIds);
+
+              return (
+                <div
+                  key={friend.id}
+                  className="overflow-hidden rounded-[1.75rem] border border-zinc-200 bg-white shadow-xs sm:rounded-[2rem]"
+                >
+                  <div className="border-b border-zinc-100 bg-zinc-50/80 p-4">
+                    <div className="flex items-start gap-3">
+                      <img
+                        src={friend.avatar}
+                        alt=""
+                        className="h-11 w-11 shrink-0 rounded-2xl object-cover ring-2 ring-white"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <h3 className="truncate text-sm font-extrabold text-zinc-900">{name}</h3>
+                          <span
+                            className={`shrink-0 text-sm font-black font-mono tabular-nums ${
+                              isCreditor ? 'text-emerald-700' : 'text-amber-700'
+                            }`}
+                          >
+                            {balance > 0.005 ? '+' : ''}
+                            {formatMoney(balance)}
+                          </span>
                         </div>
-                        <span className="shrink-0 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-sm font-black font-mono text-emerald-700 line-through decoration-2 tabular-nums">
-                          {formatMoney(payment.amount, payment.currency)}
-                        </span>
+                        <p
+                          className={`mt-1 text-[11px] font-semibold ${
+                            Math.abs(balance) <= 0.05
+                              ? 'text-zinc-400'
+                              : isCreditor
+                                ? 'text-emerald-600'
+                                : 'text-amber-600'
+                          }`}
+                        >
+                          {personBalanceHint(balance)}
+                        </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => onDeleteExpense(payment.id)}
-                        className="mt-2 min-h-9 text-[10px] font-bold text-zinc-500 underline decoration-zinc-300 underline-offset-2 hover:text-red-600"
-                      >
-                        Annuler ce paiement
-                      </button>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
-          <div className="bg-white border border-zinc-200 rounded-[1.75rem] p-3 shadow-xs sm:rounded-[2rem] sm:p-4">
-            <div className="mb-2 flex items-center gap-2">
-              <Wallet className="h-4 w-4 text-emerald-600" />
-              <h4 className="font-extrabold text-sm text-zinc-900">Dépenses par personne</h4>
-            </div>
-            <div className="divide-y divide-zinc-100 rounded-xl border border-zinc-100 bg-zinc-50/80">
-              {personStats.map(({ friend, paid, share, balance }) => {
-                const isCreditor = balance >= -0.005;
-                const name =
-                  friend.id === currentFriendId ? `Moi (${friend.name})` : friend.name;
-
-                return (
-                  <div
-                    key={friend.id}
-                    className="flex items-center gap-2.5 px-2.5 py-2.5 sm:px-3"
-                  >
-                    <img
-                      src={friend.avatar}
-                      alt=""
-                      className="h-9 w-9 shrink-0 rounded-full object-cover ring-2 ring-white"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <p className="truncate text-xs font-extrabold text-zinc-900">{name}</p>
-                        <span
-                          className={`shrink-0 text-xs font-black font-mono tabular-nums ${
+                    <div className="mt-3 grid grid-cols-3 gap-2">
+                      <div className="rounded-xl bg-white px-2.5 py-2 ring-1 ring-zinc-200">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">
+                          Avancé
+                        </p>
+                        <p className="mt-0.5 text-xs font-black font-mono text-zinc-900 tabular-nums">
+                          {formatMoney(paid)}
+                        </p>
+                      </div>
+                      <div className="rounded-xl bg-white px-2.5 py-2 ring-1 ring-zinc-200">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">
+                          Sa part
+                        </p>
+                        <p className="mt-0.5 text-xs font-black font-mono text-zinc-900 tabular-nums">
+                          {formatMoney(share)}
+                        </p>
+                      </div>
+                      <div className="rounded-xl bg-white px-2.5 py-2 ring-1 ring-zinc-200">
+                        <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">
+                          Solde
+                        </p>
+                        <p
+                          className={`mt-0.5 text-xs font-black font-mono tabular-nums ${
                             isCreditor ? 'text-emerald-700' : 'text-amber-700'
                           }`}
                         >
                           {balance > 0.005 ? '+' : ''}
                           {formatMoney(balance)}
-                        </span>
+                        </p>
                       </div>
-                      <p className="mt-0.5 truncate text-[10px] font-medium text-zinc-500">
-                        {formatMoney(paid)} avancé · {formatMoney(share)} de part
-                      </p>
-                      <p
-                        className={`mt-0.5 text-[10px] font-semibold ${
-                          Math.abs(balance) <= 0.05
-                            ? 'text-zinc-400'
-                            : isCreditor
-                              ? 'text-emerald-600'
-                              : 'text-amber-600'
-                        }`}
-                      >
-                        {personBalanceHint(balance)}
-                      </p>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        </>
+
+                  <div className="p-3 sm:p-4">
+                    <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                      Détail ({lines.length})
+                    </p>
+                    {lines.length === 0 ? (
+                      <p className="py-3 text-center text-[11px] font-medium text-zinc-400">
+                        Aucune dépense associée.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {lines.map(({ expense, isPayer, personAmount }) => (
+                          <div
+                            key={expense.id}
+                            className="flex items-center gap-2.5 rounded-xl border border-zinc-100 bg-zinc-50/80 px-2.5 py-2"
+                          >
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-sm ring-1 ring-zinc-200">
+                              {getCategoryIcon(expense.category)}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-[11px] font-bold text-zinc-900">
+                                {expenseDescription(expense)}
+                              </p>
+                              <p className="text-[10px] font-medium text-zinc-500">
+                                {expense.date}
+                                {isPayer ? (
+                                  <span className="ml-1 font-bold text-emerald-700">· a payé</span>
+                                ) : (
+                                  <span className="ml-1">
+                                    · payé par {friendById[expense.paidByFriendId]?.name ?? 'équipier'}
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <p className="text-xs font-black font-mono text-zinc-900 tabular-nums">
+                                {formatMoney(personAmount, expense.currency)}
+                              </p>
+                              {isPayer && personAmount !== expense.amount && (
+                                <p className="text-[9px] font-medium text-zinc-400">
+                                  / {formatMoney(expense.amount, expense.currency)}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
       )}
 
       {activeTab === 'stats' && (

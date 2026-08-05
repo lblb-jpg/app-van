@@ -70,6 +70,7 @@ export interface TripPhoto {
   lat?: number;
   lng?: number;
   locationName?: string;
+  mediaType?: 'photo' | 'video';
 }
 
 export type ExpenseCategory = 'carburant' | 'peage' | 'courses' | 'resto' | 'activite' | 'autre';
@@ -169,4 +170,4 @@ export interface FrancePlace {
   lng: number;
 }
 
-export type TabType = 'map' | 'sleep' | 'waypoints' | 'journal' | 'budget';
+export type TabType = 'map' | 'sleep' | 'waypoints' | 'journal' | 'budget' | 'profile';

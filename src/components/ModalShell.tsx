@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useHistoryBack } from '../lib/historyBack';
 
 export interface ModalShellProps {
   isOpen: boolean;
@@ -18,6 +19,8 @@ export function ModalShell({
   maxWidth = 'md',
   sheetClassName = '',
 }: ModalShellProps) {
+  useHistoryBack(isOpen, onClose);
+
   useEffect(() => {
     if (!isOpen) return;
 

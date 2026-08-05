@@ -10,8 +10,14 @@ import {
   X, 
   Filter,
   Trash2,
+  ChevronLeft,
+  Images,
+  Video,
+  Play,
 } from 'lucide-react';
 import { JournalNote, TripPhoto, Friend, GpsPoint } from '../types';
+import { groupPhotosIntoAlbums, type PhotoAlbum } from '../lib/photoAlbums';
+import { fileToVideoDataUrl, isVideoMedia, mediaCountLabel } from '../lib/mediaUtils';
 import { SimpleFormModal } from './SimpleFormModal';
 import {
   CompactFormField,
@@ -59,19 +65,35 @@ async function fileToPhotoDataUrl(file: File, maxSize = 1280): Promise<string> {
   }
 }
 
-const PhotoThumb: React.FC<{
+const MediaThumb: React.FC<{
   src: string;
   alt?: string;
   className?: string;
-}> = ({ src, alt, className }) => {
+  video?: boolean;
+  mutedPreview?: boolean;
+}> = ({ src, alt, className, video, mutedPreview = true }) => {
   const [failed, setFailed] = useState(false);
+  const isVideo = video ?? isVideoMedia({ url: src });
 
   if (!src || failed) {
     return (
       <div className={`absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-zinc-800 text-zinc-400 ${className ?? ''}`}>
-        <ImageIcon className="w-7 h-7 opacity-60" />
+        {isVideo ? <Video className="w-7 h-7 opacity-60" /> : <ImageIcon className="w-7 h-7 opacity-60" />}
         <span className="text-[10px] font-medium">Aperçu indisponible</span>
       </div>
+    );
+  }
+
+  if (isVideo) {
+    return (
+      <video
+        src={src}
+        muted={mutedPreview}
+        playsInline
+        preload="metadata"
+        onError={() => setFailed(true)}
+        className={`absolute inset-0 w-full h-full object-cover ${className ?? ''}`}
+      />
     );
   }
 
@@ -84,6 +106,143 @@ const PhotoThumb: React.FC<{
       onError={() => setFailed(true)}
       className={`absolute inset-0 w-full h-full object-cover ${className ?? ''}`}
     />
+  );
+};
+
+const PhotoThumb = MediaThumb;
+
+const PhotoFolderCover: React.FC<{ src: string; alt?: string; video?: boolean }> = ({ src, alt, video }) => {
+  const [failed, setFailed] = useState(false);
+  const isVideo = video ?? isVideoMedia({ url: src });
+
+  if (!src || failed) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-zinc-800">
+        {isVideo ? <Video className="h-6 w-6 text-zinc-500" /> : <ImageIcon className="h-6 w-6 text-zinc-500" />}
+      </div>
+    );
+  }
+
+  if (isVideo) {
+    return (
+      <div className="relative h-full w-full bg-zinc-900">
+        <video
+          src={src}
+          muted
+          playsInline
+          preload="metadata"
+          onError={() => setFailed(true)}
+          className="h-full w-full object-cover opacity-80"
+        />
+        <span className="absolute inset-0 grid place-items-center text-white/90">
+          <Play className="h-6 w-6 fill-current" />
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt || ''}
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+      className="h-full w-full object-cover"
+    />
+  );
+};
+
+const PhotoFolderCard: React.FC<{
+  album: PhotoAlbum;
+  onOpen: () => void;
+}> = ({ album, onOpen }) => {
+  const cover = album.photos[0]?.url;
+  const stack = album.photos.slice(0, 3);
+
+  return ( 
+    
+    <button type="button" className="photo-folder" onClick={onOpen}>
+      <div className="photo-folder__covers">
+        {stack.length > 1 ? (
+          <div className="photo-folder__cover-stack">
+            {stack.map((photo) => (
+              <PhotoFolderCover
+                key={photo.id}
+                src={photo.url}
+                video={isVideoMedia(photo)}
+              />
+            ))}
+          </div>
+        ) : cover ? (
+          <PhotoFolderCover src={cover} video={isVideoMedia(album.photos[0])} />
+        ) : (
+          <div className="flex h-full items-center justify-center bg-zinc-800">
+            <ImageIcon className="h-8 w-8 text-zinc-500" />
+          </div>
+        )}
+        <span className="photo-folder__badge">
+          <Images className="h-3 w-3" />
+          {album.photos.length}
+        </span>
+      </div>
+      <div className="photo-folder__body">
+        <div className="photo-folder__title-row">
+          <span className="photo-folder__emoji" aria-hidden>{album.emoji}</span>
+          <h3 className="photo-folder__title">{album.title}</h3>
+        </div>
+        <p className="photo-folder__meta">{album.subtitle}</p>
+      </div>
+    </button>
+  );
+};
+
+const PhotoGalleryTile: React.FC<{
+  photo: TripPhoto;
+  author?: Friend;
+  featured?: boolean;
+  onOpen: () => void;
+  onDelete: () => void;
+}> = ({ photo, author, featured, onOpen, onDelete }) => {
+  const video = isVideoMedia(photo);
+  return (
+  <article className={`photo-gallery__tile ${featured ? 'photo-gallery__tile--featured' : ''}`}>
+    <button
+      type="button"
+      className="photo-gallery__tile-btn"
+      onClick={onOpen}
+      aria-label={photo.caption || (video ? 'Ouvrir la vidéo' : 'Ouvrir la photo')}
+    >
+      <MediaThumb
+        src={photo.url}
+        alt={photo.caption}
+        video={video}
+      />
+      {video && (
+        <span className="photo-gallery__video-badge" aria-hidden>
+          <Play className="h-3.5 w-3.5 fill-current" />
+        </span>
+      )}
+    </button>
+    <button
+      type="button"
+      className="photo-gallery__tile-delete"
+      onClick={(event) => {
+        event.stopPropagation();
+        onDelete();
+      }}
+      aria-label={`Supprimer ${photo.caption || (video ? 'la vidéo' : 'la photo')}`}
+      title="Supprimer"
+    >
+      <Trash2 className="h-3.5 w-3.5" />
+    </button>
+    <div className="photo-gallery__tile-caption">
+      <p>{photo.caption?.trim() || (video ? 'Vidéo de route' : 'Souvenir de route')}</p>
+      <span style={author?.color ? { color: author.color } : undefined}>
+        {author?.name || 'Équipage'} · {photo.date}
+      </span>
+    </div>
+  </article>
   );
 };
 
@@ -108,12 +267,16 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   onAddPhoto,
   onDeletePhoto,
 }) => {
-  const [activeTab, setActiveTab] = useState<'journal' | 'photos'>('journal');
+  const [activeTab, setActiveTab] = useState<'journal' | 'photos' | 'videos'>('journal');
   const [selectedFriendFilter, setSelectedFriendFilter] = useState<string>('all');
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [showVideoModal, setShowVideoModal] = useState(false);
   const [selectedPhotoPreview, setSelectedPhotoPreview] = useState<TripPhoto | null>(null);
   const [photoToDelete, setPhotoToDelete] = useState<TripPhoto | null>(null);
+  const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null);
+  const [selectedVideoAlbumId, setSelectedVideoAlbumId] = useState<string | null>(null);
+  const [mediaUploadError, setMediaUploadError] = useState('');
 
   // New Note Form State
   const [noteTitle, setNoteTitle] = useState('');
@@ -127,6 +290,12 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   const [photoCaption, setPhotoCaption] = useState('');
   const [photoLocation, setPhotoLocation] = useState('');
   const [photoCoords, setPhotoCoords] = useState<{ lat: number; lng: number } | null>(null);
+
+  // New Video Form State
+  const [videoUrlInput, setVideoUrlInput] = useState('');
+  const [videoCaption, setVideoCaption] = useState('');
+  const [videoLocation, setVideoLocation] = useState('');
+  const [videoCoords, setVideoCoords] = useState<{ lat: number; lng: number } | null>(null);
 
   const handleCreateNote = (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,13 +332,38 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
       locationName: photoLocation.trim(),
       lat: photoCoords?.lat,
       lng: photoCoords?.lng,
+      mediaType: 'photo',
     });
 
     setPhotoUrlInput('');
     setPhotoCaption('');
     setPhotoLocation('');
     setPhotoCoords(null);
+    setMediaUploadError('');
     setShowPhotoModal(false);
+  };
+
+  const handleCreateVideo = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!videoUrlInput.trim()) return;
+
+    onAddPhoto({
+      url: videoUrlInput.trim(),
+      caption: videoCaption.trim(),
+      date: new Date().toISOString().split('T')[0],
+      friendId: currentFriendId,
+      locationName: videoLocation.trim(),
+      lat: videoCoords?.lat,
+      lng: videoCoords?.lng,
+      mediaType: 'video',
+    });
+
+    setVideoUrlInput('');
+    setVideoCaption('');
+    setVideoLocation('');
+    setVideoCoords(null);
+    setMediaUploadError('');
+    setShowVideoModal(false);
   };
 
   const closeNoteModal = () => {
@@ -186,7 +380,32 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
     setPhotoCaption('');
     setPhotoLocation('');
     setPhotoCoords(null);
+    setMediaUploadError('');
     setShowPhotoModal(false);
+  };
+
+  const closeVideoModal = () => {
+    setVideoUrlInput('');
+    setVideoCaption('');
+    setVideoLocation('');
+    setVideoCoords(null);
+    setMediaUploadError('');
+    setShowVideoModal(false);
+  };
+
+  const handleVideoFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setMediaUploadError('');
+    try {
+      const dataUrl = await fileToVideoDataUrl(file);
+      setVideoUrlInput(dataUrl);
+    } catch (err) {
+      setMediaUploadError(err instanceof Error ? err.message : 'Impossible de lire cette vidéo.');
+    } finally {
+      e.target.value = '';
+    }
   };
 
   const handleImageFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, isNote: boolean) => {
@@ -223,9 +442,23 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
     selectedFriendFilter === 'all' ? true : p.friendId === selectedFriendFilter
   );
 
+  const galleryPhotos = filteredPhotos.filter((photo) => !isVideoMedia(photo));
+  const galleryVideos = filteredPhotos.filter((photo) => isVideoMedia(photo));
+
+  const photoAlbums = groupPhotosIntoAlbums(galleryPhotos, friends, 'location');
+  const videoAlbums = groupPhotosIntoAlbums(galleryVideos, friends, 'location');
+  const selectedAlbum = photoAlbums.find((album) => album.id === selectedAlbumId) ?? null;
+  const selectedVideoAlbum = videoAlbums.find((album) => album.id === selectedVideoAlbumId) ?? null;
+
+  useEffect(() => {
+    setSelectedAlbumId(null);
+    setSelectedVideoAlbumId(null);
+  }, [selectedFriendFilter]);
+
   const previewAuthor = selectedPhotoPreview
     ? friends.find((f) => f.id === selectedPhotoPreview.friendId)
     : undefined;
+  const previewIsVideo = selectedPhotoPreview ? isVideoMedia(selectedPhotoPreview) : false;
 
   useEffect(() => {
     if (!selectedPhotoPreview) return;
@@ -271,6 +504,18 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
               <Camera className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
               <span>Photos</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('videos')}
+              className={`min-h-10 flex-1 sm:flex-none justify-center px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                activeTab === 'videos'
+                  ? 'bg-white text-zinc-900 shadow-xs'
+                  : 'text-zinc-600 hover:text-zinc-900'
+              }`}
+            >
+              <Video className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
+              <span>Vidéos</span>
+            </button>
           </div>
 
           <button
@@ -278,13 +523,16 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
             onClick={() => {
               if (activeTab === 'journal') {
                 setShowNoteModal(true);
+              } else if (activeTab === 'videos') {
+                setShowVideoModal(true);
               } else {
                 setShowPhotoModal(true);
               }
             }}
             className="min-h-11 w-full sm:w-auto justify-center rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white shadow-xs transition-all font-bold text-xs flex items-center gap-1.5 px-4 py-2.5"
           >
-            <Plus className="w-4 h-4 text-emerald-400" /> {activeTab === 'journal' ? 'Note' : 'Photo'}
+            <Plus className="w-4 h-4 text-emerald-400" />{' '}
+            {activeTab === 'journal' ? 'Note' : activeTab === 'videos' ? 'Vidéo' : 'Photo'}
           </button>
         </div>
 
@@ -380,58 +628,181 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
 
       {/* PHOTOS GALLERY TAB */}
       {activeTab === 'photos' && (
-        <div className="space-y-3">
-          {filteredPhotos.length === 0 ? (
+        <div className="photo-gallery">
+          {galleryPhotos.length === 0 ? (
             <div className="bg-white rounded-[2rem] p-8 text-center text-zinc-400 border border-zinc-200 text-xs font-medium">
-              Aucune photo disponible. Prenez une photo avec votre van !
+              Aucune photo disponible. Ajoute ta première photo de van !
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3">
-              {filteredPhotos.map((photo) => {
-                const author = friends.find((f) => f.id === photo.friendId);
+            <>
+              <div className="photo-gallery__hero">
+                <div className="photo-gallery__hero-glow" aria-hidden />
+                <div className="relative">
+                  <h2 className="photo-gallery__hero-title">Galerie du road trip</h2>
+                  <p className="photo-gallery__hero-sub">
+                    {mediaCountLabel(galleryPhotos)} · {photoAlbums.length} lieu{photoAlbums.length > 1 ? 'x' : ''}
+                  </p>
+                </div>
+              </div>
 
-                return (
-                  <div
-                    key={photo.id}
-                    className="group relative rounded-[2rem] overflow-hidden bg-zinc-900 border border-zinc-200 shadow-xs aspect-square"
-                  >
+              {!selectedAlbum ? (
+                <div className="photo-gallery__folders">
+                  {photoAlbums.map((album) => (
+                    <PhotoFolderCard
+                      key={album.id}
+                      album={album}
+                      onOpen={() => setSelectedAlbumId(album.id)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <div className="photo-gallery__breadcrumb">
                     <button
                       type="button"
-                      onClick={() => setSelectedPhotoPreview(photo)}
-                      className="absolute inset-0 z-0 cursor-pointer"
-                      aria-label={photo.caption || 'Ouvrir la photo'}
+                      className="photo-gallery__back"
+                      onClick={() => setSelectedAlbumId(null)}
                     >
-                      <PhotoThumb
-                        src={photo.url}
-                        alt={photo.caption}
-                        className="group-hover:scale-110 transition-transform duration-300"
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                      Dossiers
+                    </button>
+                    <span className="photo-gallery__crumb-current">
+                      {selectedAlbum.emoji} {selectedAlbum.title}
+                    </span>
+                  </div>
+
+                  <div className="photo-gallery__album-banner">
+                    {selectedAlbum.photos[0]?.url && (
+                      <div
+                        className="photo-gallery__album-banner-bg"
+                        style={{ backgroundImage: `url(${selectedAlbum.photos[0].url})` }}
+                        aria-hidden
                       />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setPhotoToDelete(photo);
-                      }}
-                      className="absolute right-2 top-2 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-zinc-950/70 text-white ring-1 ring-white/20 backdrop-blur-sm transition hover:bg-red-600"
-                      aria-label={`Supprimer ${photo.caption || 'la photo'}`}
-                      title="Supprimer"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                    <div className="pointer-events-none absolute inset-0 z-10 bg-gradient-to-t from-zinc-950/85 via-transparent to-transparent opacity-90 p-3 flex flex-col justify-end">
-                      <p className="text-white text-xs font-bold line-clamp-1">{photo.caption || 'Photo Van'}</p>
-                      <div className="flex items-center justify-between text-[10px] text-zinc-300 mt-1 font-mono">
-                        <span style={{ color: author?.color }} className="font-bold">
-                          {author?.name}
-                        </span>
-                        <span>{photo.date}</span>
+                    )}
+                    <div className="photo-gallery__album-banner-content">
+                      <span className="photo-gallery__album-banner-emoji" aria-hidden>
+                        {selectedAlbum.emoji}
+                      </span>
+                      <div className="min-w-0">
+                        <h3 className="photo-gallery__album-banner-title">{selectedAlbum.title}</h3>
+                        <p className="photo-gallery__album-banner-count">
+                          {selectedAlbum.photos.length} photo
+                          {selectedAlbum.photos.length > 1 ? 's' : ''}
+                        </p>
                       </div>
                     </div>
                   </div>
-                );
-              })}
+
+                  <div className="photo-gallery__grid">
+                    {selectedAlbum.photos.map((photo, index) => {
+                      const author = friends.find((f) => f.id === photo.friendId);
+                      return (
+                        <PhotoGalleryTile
+                          key={photo.id}
+                          photo={photo}
+                          author={author}
+                          featured={index === 0}
+                          onOpen={() => setSelectedPhotoPreview(photo)}
+                          onDelete={() => setPhotoToDelete(photo)}
+                        />
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* VIDEOS GALLERY TAB */}
+      {activeTab === 'videos' && (
+        <div className="photo-gallery">
+          {galleryVideos.length === 0 ? (
+            <div className="bg-white rounded-[2rem] p-8 text-center text-zinc-400 border border-zinc-200 text-xs font-medium">
+              Aucune vidéo disponible. Filme un moment du voyage !
             </div>
+          ) : (
+            <>
+              <div className="photo-gallery__hero">
+                <div className="photo-gallery__hero-glow" aria-hidden />
+                <div className="relative">
+                  <h2 className="photo-gallery__hero-title">Vidéos du road trip</h2>
+                  <p className="photo-gallery__hero-sub">
+                    {mediaCountLabel(galleryVideos)} · {videoAlbums.length} lieu{videoAlbums.length > 1 ? 'x' : ''}
+                  </p>
+                </div>
+              </div>
+
+              {!selectedVideoAlbum ? (
+                <div className="photo-gallery__folders">
+                  {videoAlbums.map((album) => (
+                    <PhotoFolderCard
+                      key={album.id}
+                      album={album}
+                      onOpen={() => setSelectedVideoAlbumId(album.id)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <div className="photo-gallery__breadcrumb">
+                    <button
+                      type="button"
+                      className="photo-gallery__back"
+                      onClick={() => setSelectedVideoAlbumId(null)}
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                      Dossiers
+                    </button>
+                    <span className="photo-gallery__crumb-current">
+                      {selectedVideoAlbum.emoji} {selectedVideoAlbum.title}
+                    </span>
+                  </div>
+
+                  <div className="photo-gallery__album-banner">
+                    {selectedVideoAlbum.photos[0]?.url && (
+                      <div className="photo-gallery__album-banner-bg photo-gallery__album-banner-bg--video" aria-hidden>
+                        <video
+                          src={selectedVideoAlbum.photos[0].url}
+                          muted
+                          playsInline
+                          preload="metadata"
+                          className="h-full w-full object-cover opacity-40"
+                        />
+                      </div>
+                    )}
+                    <div className="photo-gallery__album-banner-content">
+                      <span className="photo-gallery__album-banner-emoji" aria-hidden>
+                        {selectedVideoAlbum.emoji}
+                      </span>
+                      <div className="min-w-0">
+                        <h3 className="photo-gallery__album-banner-title">{selectedVideoAlbum.title}</h3>
+                        <p className="photo-gallery__album-banner-count">
+                          {mediaCountLabel(selectedVideoAlbum.photos)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="photo-gallery__grid">
+                    {selectedVideoAlbum.photos.map((photo, index) => {
+                      const author = friends.find((f) => f.id === photo.friendId);
+                      return (
+                        <PhotoGalleryTile
+                          key={photo.id}
+                          photo={photo}
+                          author={author}
+                          featured={index === 0}
+                          onOpen={() => setSelectedPhotoPreview(photo)}
+                          onDelete={() => setPhotoToDelete(photo)}
+                        />
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </>
           )}
         </div>
       )}
@@ -564,13 +935,71 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
         </CompactFormRoot>
       </SimpleFormModal>
 
-      {/* Immersive photo viewer */}
+      <SimpleFormModal
+        isOpen={showVideoModal}
+        onClose={closeVideoModal}
+        title="Ajouter une vidéo"
+        subtitle="Fichier · légende · lieu"
+        icon={<Video className="h-4 w-4" />}
+        titleId="add-video-title"
+        onSubmit={handleCreateVideo}
+        footer={
+          <FormModalFooter
+            onCancel={closeVideoModal}
+            submitLabel="Ajouter"
+            canSubmit={Boolean(videoUrlInput.trim())}
+          />
+        }
+      >
+        <CompactFormRoot>
+          <CompactFormHero>
+            <CompactFormField label="Vidéo *" tone="hero">
+              <input
+                type="file"
+                accept="video/*"
+                onChange={(e) => void handleVideoFileSelect(e)}
+                className="w-full text-[10px] text-white/70 file:mr-2 file:rounded-lg file:border-0 file:bg-white/15 file:px-2 file:py-1 file:text-[10px] file:font-bold file:text-white"
+              />
+              {mediaUploadError && (
+                <p className="mt-1.5 text-[10px] font-bold text-red-200">{mediaUploadError}</p>
+              )}
+              {videoUrlInput && (
+                <video
+                  src={videoUrlInput}
+                  controls
+                  playsInline
+                  className="mt-1.5 max-h-40 w-full rounded-lg border border-white/15 bg-black/40"
+                />
+              )}
+            </CompactFormField>
+          </CompactFormHero>
+
+          <CompactFormSection>
+            <CompactFormField label="Légende">
+              <CompactFormTextInput
+                placeholder="Bivouac, route, coucher de soleil…"
+                value={videoCaption}
+                onChange={(e) => setVideoCaption(e.target.value)}
+              />
+            </CompactFormField>
+            <CompactFormField label="Lieu">
+              <CompactFormTextInput
+                placeholder="Col, plage, spot…"
+                value={videoLocation}
+                onChange={(e) => setVideoLocation(e.target.value)}
+              />
+            </CompactFormField>
+          </CompactFormSection>
+        </CompactFormRoot>
+      </SimpleFormModal>
+
+      {/* Immersive media viewer */}
       {selectedPhotoPreview && (
         <div
           className="fixed inset-0 z-[180] flex flex-col bg-zinc-950/95 backdrop-blur-xl"
           role="dialog"
           aria-modal="true"
-          aria-label={selectedPhotoPreview.caption || 'Aperçu photo'}
+          aria-label={selectedPhotoPreview.caption || (previewIsVideo ? 'Aperçu vidéo' : 'Aperçu photo')}
           onClick={() => setSelectedPhotoPreview(null)}
         >
           <div
@@ -621,14 +1050,24 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
               aria-hidden
               className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(255,255,255,0.06),transparent_65%)]"
             />
-            <img
-              src={selectedPhotoPreview.url}
-              alt={selectedPhotoPreview.caption || 'Photo du voyage'}
-              className="relative z-10 max-h-full max-w-full rounded-lg object-contain shadow-[0_20px_60px_rgba(0,0,0,0.45)]"
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = 'none';
-              }}
-            />
+            {previewIsVideo ? (
+              <video
+                src={selectedPhotoPreview.url}
+                controls
+                autoPlay
+                playsInline
+                className="relative z-10 max-h-full max-w-full rounded-lg bg-black shadow-[0_20px_60px_rgba(0,0,0,0.45)]"
+              />
+            ) : (
+              <img
+                src={selectedPhotoPreview.url}
+                alt={selectedPhotoPreview.caption || 'Photo du voyage'}
+                className="relative z-10 max-h-full max-w-full rounded-lg object-contain shadow-[0_20px_60px_rgba(0,0,0,0.45)]"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = 'none';
+                }}
+              />
+            )}
           </div>
 
           <div
@@ -638,7 +1077,7 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
             <div className="pointer-events-none absolute inset-x-0 -top-16 h-16 bg-gradient-to-t from-zinc-950 to-transparent" />
             <div className="relative mx-auto w-full max-w-lg space-y-3">
               <h3 className="text-lg font-extrabold leading-snug text-white">
-                {selectedPhotoPreview.caption?.trim() || 'Souvenir de route'}
+                {selectedPhotoPreview.caption?.trim() || (previewIsVideo ? 'Vidéo de route' : 'Souvenir de route')}
               </h3>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs font-medium text-zinc-300">
                 <span className="inline-flex items-center gap-1.5">
@@ -656,7 +1095,7 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
                 className="flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-red-600/90 px-4 py-2.5 text-xs font-extrabold text-white ring-1 ring-red-400/30 transition hover:bg-red-500"
               >
                 <Trash2 className="h-4 w-4" />
-                Supprimer cette photo
+                {previewIsVideo ? 'Supprimer cette vidéo' : 'Supprimer cette photo'}
               </button>
             </div>
           </div>
@@ -670,10 +1109,11 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
       >
         <div className="space-y-4 p-5 sm:p-6">
           <div>
-            <h3 className="text-base font-extrabold text-[#17352b]">Supprimer cette photo ?</h3>
+            <h3 className="text-base font-extrabold text-[#17352b]">
+              Supprimer {photoToDelete && isVideoMedia(photoToDelete) ? 'cette vidéo' : 'cette photo'} ?
+            </h3>
             <p className="mt-1.5 text-[12px] font-medium leading-relaxed text-[#68756d]">
-              « {photoToDelete?.caption?.trim() || 'Souvenir de route'} » sera retirée de la galerie
-              pour tout l’équipage.
+              « {photoToDelete?.caption?.trim() || (photoToDelete && isVideoMedia(photoToDelete) ? 'Vidéo de route' : 'Souvenir de route')} » sera supprimée de la galerie pour tout l’équipage.
             </p>
           </div>
           <div className="flex gap-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">

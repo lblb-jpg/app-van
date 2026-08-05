@@ -2,7 +2,6 @@ import React from 'react';
 import {
   X,
   MapPin,
-  Navigation,
   ExternalLink,
   Clock3,
   Battery,
@@ -28,7 +27,8 @@ import type {
   VanSleepSpot,
   Waypoint,
 } from '../types';
-import { getSleepSpotEmoji, sleepSpotBorderColor } from '../lib/mapCoords';
+import { getSleepSpotEmoji, sleepSpotBorderColor, getWaypointEmoji } from '../lib/mapCoords';
+import { isVideoMedia } from '../lib/mediaUtils';
 
 export type MapSelection =
   | { type: 'poi'; id: string }
@@ -113,17 +113,29 @@ function getPoiConfig(type: PoiType) {
   }
 }
 
-function NavButton({ href, label }: { href: string; label: string }) {
+function NavButtons({ lat, lng }: { lat: number; lng: number }) {
+  const googleUrl = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+  const wazeUrl = `https://www.waze.com/ul?ll=${lat},${lng}&navigate=yes&utm_source=vanlife-club`;
+
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="map-info-panel__nav-btn"
-    >
-      <Navigation className="h-4 w-4" />
-      {label}
-    </a>
+    <div className="map-info-panel__nav-row">
+      <a
+        href={wazeUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="map-info-panel__nav-btn map-info-panel__nav-btn--waze"
+      >
+        🚙 Waze
+      </a>
+      <a
+        href={googleUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="map-info-panel__nav-btn map-info-panel__nav-btn--google"
+      >
+        📍 Google Maps
+      </a>
+    </div>
   );
 }
 
@@ -188,7 +200,6 @@ export const MapInfoPanel: React.FC<MapInfoPanelProps> = ({
         if (!poi) return null;
         const cfg = getPoiConfig(poi.type);
         const creator = friends.find((f) => f.id === poi.createdByFriendId);
-        const navUrl = `https://www.google.com/maps/dir/?api=1&destination=${poi.lat},${poi.lng}`;
         return (
           <>
             <div className="map-info-panel__hero" style={{ '--hero-color': cfg.bg } as React.CSSProperties}>
@@ -208,7 +219,7 @@ export const MapInfoPanel: React.FC<MapInfoPanelProps> = ({
               { icon: <Calendar className="h-3.5 w-3.5" />, label: 'Ajouté le', value: formatDate(poi.createdAt) },
               { icon: <User className="h-3.5 w-3.5" />, label: 'Par', value: creator?.name || 'Équipage' },
             ]} />
-            <NavButton href={navUrl} label="Y aller" />
+            <NavButtons lat={poi.lat} lng={poi.lng} />
           </>
         );
       }
@@ -218,12 +229,14 @@ export const MapInfoPanel: React.FC<MapInfoPanelProps> = ({
         if (!wp) return null;
         const statusLabel = wp.status === 'done' ? 'Terminée' : wp.status === 'active' ? 'En cours' : 'À venir';
         const statusColor = wp.status === 'done' ? '#64748b' : wp.status === 'active' ? '#eb6c32' : '#059669';
-        const navUrl = `https://www.google.com/maps/dir/?api=1&destination=${wp.lat},${wp.lng}`;
         const notes = wp.notes?.replace(/\s*·?\s*Source OpenStreetMap\s*:\s*https?:\/\/\S+/gi, '').trim();
         return (
           <>
             <div className="map-info-panel__hero map-info-panel__hero--waypoint">
-              <span className="map-info-panel__step-num">{wp.order}</span>
+              <span className="map-info-panel__step-num" aria-label={`Étape ${wp.order}`}>
+                <span className="map-info-panel__step-emoji">{getWaypointEmoji(wp)}</span>
+                <span className="map-info-panel__step-index">#{wp.order}</span>
+              </span>
               <div className="map-info-panel__hero-text">
                 <span className="map-info-panel__badge" style={{ background: statusColor }}>{statusLabel}</span>
                 <h2>{wp.title}</h2>
@@ -247,7 +260,7 @@ export const MapInfoPanel: React.FC<MapInfoPanelProps> = ({
               { icon: <MapPin className="h-3.5 w-3.5" />, label: 'Coordonnées', value: `${wp.lat.toFixed(5)}, ${wp.lng.toFixed(5)}` },
             ]} />
             {notes && <p className="map-info-panel__note">{notes}</p>}
-            <NavButton href={navUrl} label="Y aller" />
+            <NavButtons lat={wp.lat} lng={wp.lng} />
           </>
         );
       }
@@ -281,8 +294,8 @@ export const MapInfoPanel: React.FC<MapInfoPanelProps> = ({
               { icon: <User className="h-3.5 w-3.5" />, label: 'Opérateur', value: spot.operator || '' },
             ]} />
             {spot.description && <p className="map-info-panel__note">{spot.description}</p>}
+            <NavButtons lat={spot.lat} lng={spot.lng} />
             <div className="map-info-panel__links">
-              <NavButton href={spot.navigationUrl} label="Y aller" />
               {spot.website && (
                 <a href={spot.website} target="_blank" rel="noreferrer" className="map-info-panel__link">
                   <Globe className="h-3.5 w-3.5" /> Site web
@@ -306,29 +319,58 @@ export const MapInfoPanel: React.FC<MapInfoPanelProps> = ({
         if (!friend) return null;
         const isCurrentUser = friend.id === currentFriendId;
         const isLive = friend.liveLat != null && friend.liveLng != null;
-        const navUrl = isLive
-          ? `https://www.google.com/maps/dir/?api=1&destination=${friend.liveLat},${friend.liveLng}`
-          : '';
+        const hasBattery = friend.battery != null && Number.isFinite(friend.battery);
+        const hasLastActive = Boolean(friend.lastActive?.trim());
+        const liveStats: { icon: React.ReactNode; label: string; value: string }[] = [];
+
+        if (hasBattery) {
+          liveStats.push({
+            icon: <Battery className="h-4 w-4" />,
+            label: 'Batterie',
+            value: `${Math.max(0, Math.min(100, Math.round(friend.battery!)))}%`,
+          });
+        }
+
+        if (isLive || hasLastActive) {
+          liveStats.push({
+            icon: <span className={`map-info-panel__live-dot ${isLive ? 'is-live' : ''}`} />,
+            label: 'Statut',
+            value: isLive ? friend.lastActive || "En direct" : friend.lastActive!,
+          });
+        }
+
+        if (isLive && friend.liveLat != null && friend.liveLng != null) {
+          liveStats.push({
+            icon: <MapPin className="h-4 w-4" />,
+            label: 'Position',
+            value: `${friend.liveLat.toFixed(4)}, ${friend.liveLng.toFixed(4)}`,
+          });
+        }
+
         return (
           <>
             <div className="map-info-panel__hero map-info-panel__hero--friend" style={{ '--hero-color': friend.color } as React.CSSProperties}>
               <img src={friend.avatar} alt="" className="map-info-panel__avatar" />
               <div className="map-info-panel__hero-text">
-                <span className="map-info-panel__badge" style={{ background: friend.color }}>
-                  {isCurrentUser ? 'Vous' : 'Équipier'}
-                </span>
+                {isCurrentUser && (
+                  <span className="map-info-panel__badge" style={{ background: friend.color }}>
+                    Vous
+                  </span>
+                )}
                 <h2>{friend.name}</h2>
-                <p>{friend.role || 'Membre de l\'équipage'}</p>
+                {friend.role && <p>{friend.role}</p>}
               </div>
             </div>
-            <div className="map-info-panel__stats-row">
-              <Stat icon={<Battery className="h-4 w-4" />} label="Batterie" value={`${Math.max(0, Math.min(100, friend.battery ?? 85))}%`} />
-              <Stat icon={<span className={`map-info-panel__live-dot ${isLive ? 'is-live' : ''}`} />} label="Statut" value={isLive ? (friend.lastActive || 'En direct') : 'Hors ligne'} />
-              {isLive && friend.liveLat != null && (
-                <Stat icon={<MapPin className="h-4 w-4" />} label="Position" value={`${friend.liveLat.toFixed(4)}, ${friend.liveLng!.toFixed(4)}`} />
-              )}
-            </div>
-            {navUrl && !isCurrentUser && <NavButton href={navUrl} label="Rejoindre sur la carte" />}
+            {liveStats.length > 0 && (
+              <div className="map-info-panel__stats-row">
+                {liveStats.map((stat) => (
+                  <Stat key={stat.label} icon={stat.icon} label={stat.label} value={stat.value} />
+                ))}
+              </div>
+            )}
+            {isLive && !isCurrentUser && friend.liveLat != null && friend.liveLng != null && (
+              <NavButtons lat={friend.liveLat} lng={friend.liveLng} />
+            )}
           </>
         );
       }
@@ -337,24 +379,30 @@ export const MapInfoPanel: React.FC<MapInfoPanelProps> = ({
         const photo = photos.find((p) => p.id === selection.id);
         if (!photo) return null;
         const author = friends.find((f) => f.id === photo.friendId);
-        const navUrl = photo.lat && photo.lng
-          ? `https://www.google.com/maps/dir/?api=1&destination=${photo.lat},${photo.lng}`
-          : '';
+        const video = isVideoMedia(photo);
         return (
           <>
-            <img src={photo.url} alt="" className="map-info-panel__photo map-info-panel__photo--large" />
+            {video ? (
+              <video
+                src={photo.url}
+                controls
+                playsInline
+                className="map-info-panel__photo map-info-panel__photo--large bg-black"
+              />
+            ) : (
+              <img src={photo.url} alt="" className="map-info-panel__photo map-info-panel__photo--large" />
+            )}
             <div className="map-info-panel__hero-text map-info-panel__hero-text--compact">
               <span className="map-info-panel__badge" style={{ background: '#475569' }}>
-                <Camera className="inline h-3 w-3" /> Photo
+                <Camera className="inline h-3 w-3" /> {video ? 'Vidéo' : 'Photo'}
               </span>
-              <h2>{photo.caption || 'Photo souvenir'}</h2>
+              <h2>{photo.caption || (video ? 'Vidéo souvenir' : 'Photo souvenir')}</h2>
             </div>
             <DetailGrid rows={[
               { icon: <Calendar className="h-3.5 w-3.5" />, label: 'Date', value: formatDate(photo.date) },
               { icon: <User className="h-3.5 w-3.5" />, label: 'Par', value: author?.name || 'Équipage' },
               { icon: <MapPin className="h-3.5 w-3.5" />, label: 'Lieu', value: photo.locationName || '' },
             ]} />
-            {navUrl && <NavButton href={navUrl} label="Y aller" />}
           </>
         );
       }
@@ -363,9 +411,6 @@ export const MapInfoPanel: React.FC<MapInfoPanelProps> = ({
         const note = journal.find((n) => n.id === selection.id);
         if (!note) return null;
         const author = friends.find((f) => f.id === note.friendId);
-        const navUrl = note.lat && note.lng
-          ? `https://www.google.com/maps/dir/?api=1&destination=${note.lat},${note.lng}`
-          : '';
         return (
           <>
             <div className="map-info-panel__hero map-info-panel__hero--journal">
@@ -387,7 +432,9 @@ export const MapInfoPanel: React.FC<MapInfoPanelProps> = ({
                 ))}
               </div>
             )}
-            {navUrl && <NavButton href={navUrl} label="Y aller" />}
+            {note.lat != null && note.lng != null && (
+              <NavButtons lat={note.lat} lng={note.lng} />
+            )}
           </>
         );
       }

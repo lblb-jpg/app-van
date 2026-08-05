@@ -12,7 +12,9 @@ import type {
   TripPhoto,
   Waypoint,
 } from '../types';
-import { ensureSupabaseSession, getSupabaseClient } from './supabase';
+import { inferMediaType } from '../lib/mediaUtils';
+import { CREW_DEFAULT_COLORS, resolveFriendAvatar } from '../lib/crewAvatars';
+import { ensureSupabaseSession, getSupabaseClient, isCrewMemberName } from './supabase';
 
 const TRIP_KEY = 'van_current_trip_id_v1';
 const POINT_CHUNK = 400;
@@ -25,12 +27,6 @@ export type CloudContext = {
 
 function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-
-function makeInitialAvatar(name: string, background: string) {
-  return `data:image/svg+xml,${encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" rx="48" fill="${background}"/><text x="48" y="58" text-anchor="middle" font-family="Arial, sans-serif" font-size="36" font-weight="700" fill="white">${name.slice(0, 1).toUpperCase()}</text></svg>`
-  )}`;
 }
 
 function toIsoDate(value?: string | null) {
@@ -266,11 +262,18 @@ export async function bootstrapCloud(): Promise<CloudContext | null> {
       (user.user_metadata?.name as string | undefined) ||
       user.email?.split('@')[0] ||
       'Voyageur';
+    const crewName = isCrewMemberName(name) ? name : undefined;
+    const color = crewName ? CREW_DEFAULT_COLORS[crewName] : '#059669';
+    const avatarUrl = resolveFriendAvatar(
+      name,
+      color,
+      (user.user_metadata?.avatar_url as string | undefined) ?? null
+    );
     const { error: profileError } = await supabase.from('profiles').insert({
       id: user.id,
       name,
-      avatar_url: (user.user_metadata?.avatar_url as string | undefined) ?? null,
-      color: '#059669',
+      avatar_url: avatarUrl,
+      color,
     });
     if (profileError) throw profileError;
   }
@@ -416,7 +419,7 @@ export async function loadTripBundle(ctx: CloudContext) {
     return {
       id: row.user_id as string,
       name,
-      avatar: profile?.avatar_url || makeInitialAvatar(name, color),
+      avatar: resolveFriendAvatar(name, color, profile?.avatar_url),
       color,
       role: profile?.role_label || (row.member_role === 'owner' ? 'Capitaine' : 'Équipier'),
       isCurrentUser: row.user_id === user.id,
@@ -432,7 +435,7 @@ export async function loadTripBundle(ctx: CloudContext) {
     friends.unshift({
       id: user.id,
       name: (user.user_metadata?.name as string) || user.email?.split('@')[0] || 'Moi',
-      avatar: makeInitialAvatar('Moi', '#059669'),
+      avatar: resolveFriendAvatar('Moi', '#059669', undefined),
       color: '#059669',
       role: 'Capitaine',
       isCurrentUser: true,
@@ -442,16 +445,20 @@ export async function loadTripBundle(ctx: CloudContext) {
   const photos: TripPhoto[] = await Promise.all(
     (photosRes.data ?? [])
       .filter((row) => !row.journal_note_id)
-      .map(async (row) => ({
-        id: row.id,
-        url: await resolvePhotoUrl(row.storage_path, supabase),
-        caption: row.caption ?? undefined,
-        date: toIsoDate(row.taken_on),
-        friendId: row.author_id,
-        lat: row.lat ?? undefined,
-        lng: row.lng ?? undefined,
-        locationName: row.location_name ?? undefined,
-      }))
+      .map(async (row) => {
+        const url = await resolvePhotoUrl(row.storage_path, supabase);
+        return {
+          id: row.id,
+          url,
+          caption: row.caption ?? undefined,
+          date: toIsoDate(row.taken_on),
+          friendId: row.author_id,
+          lat: row.lat ?? undefined,
+          lng: row.lng ?? undefined,
+          locationName: row.location_name ?? undefined,
+          mediaType: inferMediaType(url, row.storage_path),
+        };
+      })
   );
 
   const photosByNote = new Map<string, string[]>();
@@ -654,7 +661,14 @@ export async function insertJournalNote(ctx: CloudContext, note: Omit<JournalNot
 export async function insertPhoto(ctx: CloudContext, photo: Omit<TripPhoto, 'id'> & { id?: string }) {
   const memberIds = new Set(await loadMemberIds(ctx));
   const authorId = asMemberId(photo.friendId, ctx.user.id, memberIds);
-  const storagePath = await uploadPhotoBlob(ctx.supabase, ctx.tripId, ctx.user.id, photo.url);
+  const isVideo = photo.mediaType === 'video' || inferMediaType(photo.url) === 'video';
+  const storagePath = await uploadPhotoBlob(
+    ctx.supabase,
+    ctx.tripId,
+    ctx.user.id,
+    photo.url,
+    isVideo ? 'video.mp4' : 'photo.jpg'
+  );
   const { data, error } = await ctx.supabase
     .from('photos')
     .insert({
@@ -670,15 +684,17 @@ export async function insertPhoto(ctx: CloudContext, photo: Omit<TripPhoto, 'id'
     .select('*')
     .single();
   if (error) throw error;
+  const url = await resolvePhotoUrl(data.storage_path, ctx.supabase);
   return {
     id: data.id,
-    url: await resolvePhotoUrl(data.storage_path, ctx.supabase),
+    url,
     caption: data.caption ?? undefined,
     date: toIsoDate(data.taken_on),
     friendId: data.author_id,
     lat: data.lat ?? undefined,
     lng: data.lng ?? undefined,
     locationName: data.location_name ?? undefined,
+    mediaType: inferMediaType(url, data.storage_path),
   } satisfies TripPhoto;
 }
 
@@ -812,6 +828,11 @@ export async function updateExpense(ctx: CloudContext, id: string, expense: Omit
 
 export async function deleteExpense(ctx: CloudContext, id: string) {
   const { error } = await ctx.supabase.from('expenses').delete().eq('id', id).eq('trip_id', ctx.tripId);
+  if (error) throw error;
+}
+
+export async function deleteAllExpenses(ctx: CloudContext) {
+  const { error } = await ctx.supabase.from('expenses').delete().eq('trip_id', ctx.tripId);
   if (error) throw error;
 }
 

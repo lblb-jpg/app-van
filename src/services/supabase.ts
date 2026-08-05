@@ -1,6 +1,10 @@
 // Optional Supabase Integration Service
 // Works seamlessly alongside local IndexedDB persistence
 import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
+import {
+  CREW_DEFAULT_COLORS,
+  resolveFriendAvatar,
+} from '../lib/crewAvatars';
 
 export interface SupabaseConfig {
   url: string;
@@ -75,19 +79,29 @@ export function getSupabaseClient(): SupabaseClient | null {
 }
 
 async function upsertProfileName(supabase: SupabaseClient, userId: string, name: string) {
+  const crewName = isCrewMemberName(name) ? name : undefined;
+  const color = crewName ? CREW_DEFAULT_COLORS[crewName] : '#059669';
+  const { data: existing } = await supabase
+    .from('profiles')
+    .select('avatar_url')
+    .eq('id', userId)
+    .maybeSingle();
+
+  const avatarUrl = resolveFriendAvatar(name, color, existing?.avatar_url);
+
   const { error } = await supabase.from('profiles').upsert(
     {
       id: userId,
       name,
-      color: '#059669',
+      color,
+      avatar_url: avatarUrl,
     },
     { onConflict: 'id' }
   );
   if (error) {
-    // Profile may already exist via trigger — try update only.
-    await supabase.from('profiles').update({ name }).eq('id', userId);
+    await supabase.from('profiles').update({ name, color, avatar_url: avatarUrl }).eq('id', userId);
   }
-  await supabase.auth.updateUser({ data: { name } });
+  await supabase.auth.updateUser({ data: { name, avatar_url: avatarUrl } });
 }
 
 /**
@@ -270,6 +284,7 @@ export async function switchToCrewMember(name: CrewMemberName) {
   const targetEmail = credentialsFromDisplayName(name).email;
   if (existing.session?.user.email?.toLowerCase() === targetEmail) {
     saveDisplayName(name);
+    await upsertProfileName(supabase, existing.session.user.id, name);
     return existing.session.user;
   }
 
@@ -277,6 +292,27 @@ export async function switchToCrewMember(name: CrewMemberName) {
   const user = await signInOrCreateCrewAccount(supabase, name);
   saveDisplayName(name);
   return user;
+}
+
+/**
+ * Ensures each fixed crew account has a profile photo in Supabase
+ * (without changing the active browser session).
+ */
+export async function backfillCrewProfileAvatars() {
+  const config = getStoredSupabaseConfig();
+  if (!config) return;
+
+  for (const name of CREW_MEMBER_NAMES) {
+    try {
+      const isolated = createClient(config.url, config.anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      });
+      await signInOrCreateCrewAccount(isolated, name);
+      await isolated.auth.signOut();
+    } catch (err) {
+      console.warn(`Avatar backfill ${name}:`, err);
+    }
+  }
 }
 
 /**

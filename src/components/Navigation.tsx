@@ -18,9 +18,11 @@ import {
   BedDouble,
   Menu,
   RefreshCw,
+  MoreVertical,
 } from 'lucide-react';
 import { TabType, Friend } from '../types';
-import { isIosDevice, isStandalonePwa } from '../lib/pwa';
+import { useHistoryBack } from '../lib/historyBack';
+import { isAndroidDevice, isIosDevice, isMobileDevice, isStandalonePwa } from '../lib/pwa';
 import type { GeoStatus } from '../services/geolocation';
 import { wasGeoGranted } from '../lib/permissions';
 import { ModalShell } from './ModalShell';
@@ -55,6 +57,7 @@ const NAV_ITEMS: {
   { id: 'waypoints', label: 'Étapes', hint: 'Arrêts du voyage', icon: <Milestone className="h-5 w-5" /> },
   { id: 'journal', label: 'Journal', hint: 'Notes & photos', icon: <BookOpen className="h-5 w-5" /> },
   { id: 'budget', label: 'VanPay', hint: 'Budget équipage', icon: <Receipt className="h-5 w-5" /> },
+  { id: 'profile', label: 'Profil', hint: 'Photo & prénom', icon: <User className="h-5 w-5" /> },
 ];
 
 function tabLabel(tab: TabType) {
@@ -81,9 +84,12 @@ export const Navigation: React.FC<NavigationProps> = ({
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallHint, setShowInstallHint] = useState(false);
-  const [showIosHelp, setShowIosHelp] = useState(false);
+  const [showManualInstallHelp, setShowManualInstallHelp] = useState(false);
+  const [installHelpPlatform, setInstallHelpPlatform] = useState<'ios' | 'android'>('ios');
   const [dismissedGeoError, setDismissedGeoError] = useState('');
   const standalone = isStandalonePwa();
+
+  useHistoryBack(menuOpen, () => setMenuOpen(false));
 
   const currentFriend = friends.find((f) => f.id === currentFriendId) || friends[0];
   const hasFriends = Boolean(currentFriend);
@@ -119,24 +125,34 @@ export const Navigation: React.FC<NavigationProps> = ({
     window.addEventListener('offline', handleOffline);
 
     const dismissed = localStorage.getItem(INSTALL_DISMISS_KEY) === '1';
-    if (!standalone && !dismissed && isIosDevice()) {
-      setShowInstallHint(true);
+    let androidHintTimer: number | undefined;
+
+    if (!standalone && !dismissed && isMobileDevice()) {
+      if (isIosDevice()) {
+        setShowInstallHint(true);
+      } else if (isAndroidDevice()) {
+        // Chrome Android may delay beforeinstallprompt — nudge after a short visit.
+        androidHintTimer = window.setTimeout(() => setShowInstallHint(true), 4_000);
+      }
     }
 
     const handleBeforeInstall = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e);
+      if (androidHintTimer) window.clearTimeout(androidHintTimer);
       if (!dismissed && !standalone) setShowInstallHint(true);
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstall);
     window.addEventListener('appinstalled', () => {
+      if (androidHintTimer) window.clearTimeout(androidHintTimer);
       setShowInstallHint(false);
       setDeferredPrompt(null);
       localStorage.setItem(INSTALL_DISMISS_KEY, '1');
     });
 
     return () => {
+      if (androidHintTimer) window.clearTimeout(androidHintTimer);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
@@ -145,7 +161,7 @@ export const Navigation: React.FC<NavigationProps> = ({
 
   const dismissInstall = () => {
     setShowInstallHint(false);
-    setShowIosHelp(false);
+    setShowManualInstallHelp(false);
     localStorage.setItem(INSTALL_DISMISS_KEY, '1');
   };
 
@@ -158,8 +174,22 @@ export const Navigation: React.FC<NavigationProps> = ({
       localStorage.setItem(INSTALL_DISMISS_KEY, '1');
       return;
     }
-    setShowIosHelp(true);
+    setInstallHelpPlatform(isAndroidDevice() ? 'android' : 'ios');
+    setShowManualInstallHelp(true);
   };
+
+  const installHelpSteps =
+    installHelpPlatform === 'android'
+      ? [
+          { icon: <MoreVertical className="h-4 w-4" />, text: 'Ouvre le menu Chrome (⋮ en haut à droite)' },
+          { icon: <Download className="h-4 w-4" />, text: 'Choisis « Installer l\u2019application » ou « Ajouter à l\u2019écran d\u2019accueil »' },
+          { icon: <Plus className="h-4 w-4" />, text: 'Valide — Vanlife Club apparaît sur ton écran d\u2019accueil' },
+        ]
+      : [
+          { icon: <Share className="h-4 w-4" />, text: 'Touche Partager (carré avec flèche)' },
+          { icon: <Plus className="h-4 w-4" />, text: 'Choisis « Sur l\u2019écran d\u2019accueil »' },
+          { icon: <Download className="h-4 w-4" />, text: 'Valide — l\u2019icône Vanlife Club apparaît' },
+        ];
 
   const navigateTo = (tab: TabType) => {
     setActiveTab(tab);
@@ -265,11 +295,18 @@ export const Navigation: React.FC<NavigationProps> = ({
               </button>
             )}
             <div className="van-header__user">
-              {currentFriend ? (
-                <img src={currentFriend.avatar} alt="" className="h-6 w-6 rounded-full object-cover" />
-              ) : (
-                <User className="h-4 w-4 text-[#68756d]" />
-              )}
+              <button
+                type="button"
+                onClick={() => navigateTo('profile')}
+                className="van-header__avatar-btn"
+                aria-label="Ouvrir mon profil"
+              >
+                {currentFriend ? (
+                  <img src={currentFriend.avatar} alt="" className="h-6 w-6 rounded-full object-cover" />
+                ) : (
+                  <User className="h-4 w-4 text-[#68756d]" />
+                )}
+              </button>
               <select
                 value={currentFriendId}
                 onChange={(e) => setCurrentFriendId(e.target.value)}
@@ -332,25 +369,23 @@ export const Navigation: React.FC<NavigationProps> = ({
         </div>
       )}
 
-      <ModalShell isOpen={showIosHelp} onClose={() => setShowIosHelp(false)} maxWidth="sm">
+      <ModalShell isOpen={showManualInstallHelp} onClose={() => setShowManualInstallHelp(false)} maxWidth="sm">
         <div className="space-y-4 p-5 sm:p-6">
           <div className="flex items-start justify-between gap-3">
             <div>
               <h3 className="text-base font-extrabold text-[#17352b]">Ajouter à l\u2019écran d\u2019accueil</h3>
               <p className="mt-1 text-[0.75rem] font-medium leading-relaxed text-[#6f786f]">
-                Pour l\u2019utiliser comme une vraie app mobile.
+                {installHelpPlatform === 'android'
+                  ? 'Installe l\u2019app pour un accès rapide, plein écran et GPS optimisé.'
+                  : 'Pour l\u2019utiliser comme une vraie app mobile.'}
               </p>
             </div>
-            <button type="button" onClick={() => setShowIosHelp(false)} className="touch-target min-h-10 min-w-10 text-[#6f786f]">
+            <button type="button" onClick={() => setShowManualInstallHelp(false)} className="touch-target min-h-10 min-w-10 text-[#6f786f]">
               <X className="h-5 w-5" />
             </button>
           </div>
           <ol className="space-y-2.5">
-            {[
-              { icon: <Share className="h-4 w-4" />, text: 'Touche Partager (carré avec flèche)' },
-              { icon: <Plus className="h-4 w-4" />, text: 'Choisis « Sur l\u2019écran d\u2019accueil »' },
-              { icon: <Download className="h-4 w-4" />, text: 'Valide — l\u2019icône Vanlife Club apparaît' },
-            ].map((step, i) => (
+            {installHelpSteps.map((step, i) => (
               <li key={i} className="flex items-center gap-3 rounded-2xl bg-[#f5f1e7] px-3 py-2.5 text-[0.75rem] font-semibold text-[#17352b]">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white text-[#eb6c32]">{step.icon}</span>
                 <span><span className="mr-1 text-[0.65rem] font-bold text-[#6f786f]">{i + 1}.</span>{step.text}</span>

@@ -1,4 +1,5 @@
 import { markGeoGranted, queryGeoPermission, wasGeoGranted } from '../lib/permissions';
+import { isAndroidDevice } from '../lib/pwa';
 
 export type GeoStatus =
   | { state: 'idle' }
@@ -13,7 +14,9 @@ export function isGeolocationAvailable() {
 export function geolocationErrorMessage(error: GeolocationPositionError) {
   switch (error.code) {
     case error.PERMISSION_DENIED:
-      return 'Autorise la localisation dans le navigateur pour afficher ta position.';
+      return isAndroidDevice()
+        ? 'Autorise la localisation : Paramètres > Applications > Chrome > Autorisations > Position.'
+        : 'Autorise la localisation dans le navigateur pour afficher ta position.';
     case error.POSITION_UNAVAILABLE:
       return 'Position GPS indisponible. Vérifie que le GPS est activé.';
     case error.TIMEOUT:

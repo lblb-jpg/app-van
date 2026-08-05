@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import {
   Friend,
   Poi,
@@ -16,6 +16,7 @@ import {
   bootstrapCloud,
   CloudContext,
   deleteExpense as cloudDeleteExpense,
+  deleteAllExpenses as cloudDeleteAllExpenses,
   deletePhoto as cloudDeletePhoto,
   deleteWaypoint as cloudDeleteWaypoint,
   insertExpense as cloudInsertExpense,
@@ -36,6 +37,7 @@ import {
   setActiveTripId,
   subscribeTripRealtime,
   updateWaypointStatus as cloudUpdateWaypointStatus,
+  updateOwnProfile,
   upsertLiveLocation,
 } from './services/supabaseRepo';
 import { SYNC_DEBOUNCE_MS } from './services/syncConfig';
@@ -47,28 +49,39 @@ import {
   type PowerProfile,
 } from './lib/powerMode';
 import { Navigation } from './components/Navigation';
-import { MapView } from './components/MapView';
 import { WaypointsManager } from './components/WaypointsManager';
 import { JournalAndPhotos } from './components/JournalAndPhotos';
 import { TricountBudget } from './components/TricountBudget';
+import { ProfileSettings } from './components/ProfileSettings';
 import { VanSleepSearch } from './components/VanSleepSearch';
 import { AuthModal } from './components/AuthModal';
 import { calculateHaversineDistance } from './services/gpx';
 import { startGeolocationWatch, type GeoStatus } from './services/geolocation';
 import { toUserFacingError } from './lib/userFacingError';
 import {
+  hydrateFriendAvatars,
+  readCrewCustomization,
+  resolveFriendAvatar,
+  writeCrewCustomization,
+  type CrewCustomization,
+} from './lib/crewAvatars';
+import {
   CREW_MEMBER_NAMES,
+  backfillCrewProfileAvatars,
   ensureCrewAccounts,
   ensureCrewSession,
+  isCrewMemberName,
   resolvePreferredCrewName,
   switchToCrewMember,
+  type CrewMemberName,
 } from './services/supabase';
 
+const MapView = lazy(() =>
+  import('./components/MapView').then((module) => ({ default: module.MapView }))
+);
 const ACTIVE_TAB_KEY = 'van_active_tab_v1';
 const CREW_CUSTOMIZATIONS_KEY = 'van_crew_customizations_v1';
-const VALID_TABS: TabType[] = ['map', 'sleep', 'waypoints', 'journal', 'budget'];
-
-type CrewCustomization = { name?: string; avatar?: string };
+const VALID_TABS: TabType[] = ['map', 'sleep', 'waypoints', 'journal', 'budget', 'profile'];
 
 function readCrewCustomizations(): Record<string, CrewCustomization> {
   try {
@@ -92,6 +105,11 @@ function readStoredTab(): TabType {
 export default function App() {
   const mainRef = useRef<HTMLElement>(null);
   const [activeTab, setActiveTabState] = useState<TabType>(() => readStoredTab());
+  const [mapMounted, setMapMounted] = useState(() => readStoredTab() === 'map');
+
+  useEffect(() => {
+    if (activeTab === 'map') setMapMounted(true);
+  }, [activeTab]);
 
   const setActiveTab = (tab: TabType) => {
     setActiveTabState(tab);
@@ -127,6 +145,7 @@ export default function App() {
   const [activeTripId, setActiveTripIdState] = useState<string | null>(null);
   const [syncError, setSyncError] = useState('');
   const [booting, setBooting] = useState(true);
+  const [savingProfile, setSavingProfile] = useState(false);
 
   const cloudRef = useRef<CloudContext | null>(null);
   const lastLivePushRef = useRef(0);
@@ -197,11 +216,16 @@ export default function App() {
       );
       if (!friend) return [];
       crewAccountNamesRef.current[friend.id] = name;
-      const customization = crewCustomizationsRef.current[friend.id];
+      const customization = readCrewCustomization(crewCustomizationsRef.current, friend.id, name);
+      const displayName = customization?.name?.trim() || friend.name;
       return [{
         ...friend,
-        name: customization?.name?.trim() || friend.name,
-        avatar: customization?.avatar || friend.avatar,
+        name: displayName,
+        avatar: resolveFriendAvatar(
+          displayName,
+          friend.color,
+          customization?.avatar || friend.avatar
+        ),
       }];
     });
     const visibleFriends = crewFriends.length ? crewFriends : bundle.friends;
@@ -233,6 +257,7 @@ export default function App() {
 
     try {
       await ensureCrewSession(resolvePreferredCrewName());
+      void backfillCrewProfileAvatars();
 
       let ctx = await bootstrapCloud();
       if (!ctx) {
@@ -299,7 +324,11 @@ export default function App() {
 
   useEffect(() => {
     async function init() {
-      const f = await dbService.getFriends();
+      const rawFriends = await dbService.getFriends();
+      const f = hydrateFriendAvatars(rawFriends);
+      if (rawFriends.some((friend, index) => friend.avatar !== f[index]?.avatar)) {
+        await dbService.saveFriends(f);
+      }
       const p = await dbService.getPois();
       const j = await dbService.getJournal();
       const e = await dbService.getExpenses();
@@ -308,7 +337,7 @@ export default function App() {
       const t = await dbService.getTracks();
       const currF = await dbService.getCurrentFriendId();
 
-      setFriends(f);
+      setFriends(hydrateFriendAvatars(f));
       setPois(p);
       setJournal(j);
       setExpenses(e);
@@ -569,6 +598,55 @@ export default function App() {
     return stop;
   }, [powerProfile]);
 
+  const handleSwitchToCrewMember = (name: CrewMemberName) => {
+    const friend =
+      friends.find((candidate) => crewAccountNamesRef.current[candidate.id] === name) ||
+      friends.find((candidate) => candidate.name.trim().toLowerCase() === name.toLowerCase());
+    if (friend) void handleCurrentFriendChange(friend.id);
+  };
+
+  const handleUpdateOwnProfile = async (patch: { name: string; avatar: string }) => {
+    const friendId = currentFriendIdRef.current;
+    const friend = friends.find((candidate) => candidate.id === friendId);
+    if (!friend) return;
+
+    const crewName = crewAccountNamesRef.current[friendId] as CrewMemberName | undefined;
+    crewCustomizationsRef.current = writeCrewCustomization(
+      crewCustomizationsRef.current,
+      friendId,
+      crewName,
+      patch
+    );
+    localStorage.setItem(CREW_CUSTOMIZATIONS_KEY, JSON.stringify(crewCustomizationsRef.current));
+
+    const updatedFriends = friends.map((candidate) =>
+      candidate.id === friendId
+        ? { ...candidate, name: patch.name, avatar: patch.avatar }
+        : candidate
+    );
+    setFriends(updatedFriends);
+    await dbService.saveFriends(updatedFriends);
+
+    const ctx = cloudRef.current;
+    if (ctx && ctx.user.id === friendId) {
+      setSavingProfile(true);
+      try {
+        await updateOwnProfile(ctx, { name: patch.name, avatar: patch.avatar });
+        await ctx.supabase.auth.updateUser({
+          data: { name: patch.name, avatar_url: patch.avatar },
+        });
+      } finally {
+        setSavingProfile(false);
+      }
+    }
+  };
+
+  const profileFriend = friends.find((friend) => friend.id === currentFriendId) || friends[0];
+  const activeCrewName = profileFriend
+    ? (crewAccountNamesRef.current[profileFriend.id] ||
+        (isCrewMemberName(profileFriend.name) ? profileFriend.name : undefined))
+    : undefined;
+
   const handleCurrentFriendChange = async (id: string) => {
     if (!friends.some((friend) => friend.id === id)) return;
 
@@ -727,6 +805,20 @@ export default function App() {
     await dbService.saveExpenses(updated);
   };
 
+  const handleClearAllExpenses = async () => {
+    const ctx = cloudRef.current;
+    if (ctx) {
+      try {
+        await cloudDeleteAllExpenses(ctx);
+      } catch (err: any) {
+        setSyncError(toUserFacingError(err, 'Impossible de réinitialiser les dépenses.'));
+        return;
+      }
+    }
+    setExpenses([]);
+    await dbService.saveExpenses([]);
+  };
+
   const handleAddWaypoint = async (newWpData: Omit<Waypoint, 'id'>) => {
     const ctx = cloudRef.current;
     if (ctx) {
@@ -829,23 +921,36 @@ export default function App() {
             : 'van-main-inset overflow-y-auto'
         }`}
       >
-        <div className={activeTab === 'map' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'} aria-hidden={activeTab !== 'map'}>
-          <MapView
-            pois={pois}
-            friends={friends}
-            currentFriendId={currentFriendId}
-            photos={photos}
-            waypoints={waypoints}
-            journal={journal}
-            pastTracks={tracks}
-            sleepSpots={sleepSearchSpots}
-            userLocation={userLocation}
-            focusLocation={mapFocus}
-            mapVisible={activeTab === 'map'}
-            onAddPoi={handleAddPoi}
-            onAddPhoto={handleAddPhoto}
-          />
-        </div>
+        {mapMounted && (
+          <div
+            className={activeTab === 'map' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+            aria-hidden={activeTab !== 'map'}
+          >
+            <Suspense
+              fallback={
+                <div className="map-view map-view--loading flex min-h-0 flex-1 flex-col">
+                  Chargement de la carte…
+                </div>
+              }
+            >
+              <MapView
+                pois={pois}
+                friends={friends}
+                currentFriendId={currentFriendId}
+                photos={photos}
+                waypoints={waypoints}
+                journal={journal}
+                pastTracks={tracks}
+                sleepSpots={sleepSearchSpots}
+                userLocation={userLocation}
+                focusLocation={mapFocus}
+                mapVisible={activeTab === 'map'}
+                onAddPoi={handleAddPoi}
+                onAddPhoto={handleAddPhoto}
+              />
+            </Suspense>
+          </div>
+        )}
 
         {activeTab === 'sleep' && (
           <VanSleepSearch
@@ -902,6 +1007,18 @@ export default function App() {
             onAddExpense={handleAddExpense}
             onUpdateExpense={handleUpdateExpense}
             onDeleteExpense={handleDeleteExpense}
+            onClearAllExpenses={handleClearAllExpenses}
+          />
+        )}
+
+        {activeTab === 'profile' && (
+          <ProfileSettings
+            friend={profileFriend}
+            activeCrewName={activeCrewName}
+            cloudReady={cloudReady}
+            saving={savingProfile}
+            onSave={handleUpdateOwnProfile}
+            onSwitchCrewMember={handleSwitchToCrewMember}
           />
         )}
 
