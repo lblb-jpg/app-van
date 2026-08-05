@@ -6,6 +6,7 @@ import {
   ArrowRightLeft,
   CheckCircle2,
   Wallet,
+  X,
 } from 'lucide-react';
 import { Expense, ExpenseCategory, Friend, DebtSettlement } from '../types';
 import { SimpleFormModal } from './SimpleFormModal';
@@ -29,6 +30,14 @@ const CATEGORIES: { id: ExpenseCategory; label: string; emoji: string }[] = [
 ];
 
 const SETTLEMENT_PREFIX = '[RÈGLEMENT]';
+
+function expenseDescription(expense: Expense) {
+  return expense.description?.trim() || 'Dépense';
+}
+
+function isSettlementExpense(expense: Expense) {
+  return expenseDescription(expense).startsWith(SETTLEMENT_PREFIX);
+}
 
 function parseEuroAmount(raw: string) {
   const normalized = raw.replace(/\s/g, '').replace(',', '.');
@@ -186,13 +195,9 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
   const hasDraftAmount =
     Number.isFinite(parsedAmount) && parsedAmount > 0 && splitWith.length > 0 && Boolean(paidBy);
 
-  const settlementExpenses = expenses.filter((expense) =>
-    expense.description.startsWith(SETTLEMENT_PREFIX)
-  );
+  const settlementExpenses = expenses.filter(isSettlementExpense);
   const recentSettlementExpenses = settlementExpenses.slice(0, 3);
-  const regularExpenses = expenses.filter(
-    (expense) => !expense.description.startsWith(SETTLEMENT_PREFIX)
-  );
+  const regularExpenses = expenses.filter((expense) => !isSettlementExpense(expense));
   const totalSpent = regularExpenses.reduce((acc, curr) => acc + curr.amount, 0);
   const totalPerPerson = friends.length > 0 ? totalSpent / friends.length : 0;
 
@@ -568,7 +573,7 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
                       </div>
                       <div className="min-w-0">
                         <h4 className="font-bold text-xs text-zinc-900 truncate">
-                          {exp.description}
+                          {expenseDescription(exp)}
                         </h4>
                         <p className="text-[10px] text-zinc-500 font-medium truncate">
                           Payé par <strong style={{ color: payer?.color }}>{payer?.name}</strong>
@@ -585,7 +590,7 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
                         onClick={() => setExpenseToDelete(exp)}
                         className="touch-target flex items-center justify-center text-zinc-400 hover:text-red-500 rounded-lg transition-colors"
                         title="Supprimer la dépense"
-                        aria-label={`Supprimer ${exp.description}`}
+                        aria-label={`Supprimer ${expenseDescription(exp)}`}
                       >
                         <X className="w-4 h-4" />
                       </button>

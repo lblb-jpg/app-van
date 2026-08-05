@@ -407,7 +407,7 @@ export async function loadTripBundle(ctx: CloudContext) {
 
   const expenses: Expense[] = (expensesRes.data ?? []).map((row: any) => ({
     id: row.id,
-    description: row.description,
+    description: row.description?.trim() || 'Dépense',
     amount: Number(row.amount),
     category: row.category as ExpenseCategory,
     date: toIsoDate(row.spent_on),
