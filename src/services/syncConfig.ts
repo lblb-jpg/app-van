@@ -1,5 +1,5 @@
 /** Délais par défaut — voir `lib/powerMode.ts` pour le profil adaptatif (carte / premier plan / arrière-plan). */
-export const SYNC_DEBOUNCE_MS = 150;
+export const SYNC_DEBOUNCE_MS = 500;
 /** Secours si Realtime est coupé — Realtime reste la source principale */
 export const SYNC_FULL_INTERVAL_MS = 30_000;
 /** Secours positions live — Realtime gère member_locations en priorité */

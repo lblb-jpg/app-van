@@ -31,6 +31,7 @@ import {
   formatLastActive,
   loadTripBundle,
   mergeLiveLocationsIntoFriends,
+  type LoadTripBundleOptions,
   syncLocalDataToCloud,
   verifyCloudSchema,
   reorderWaypoint as cloudReorderWaypoint,
@@ -147,9 +148,12 @@ export default function App() {
   const [activeTripId, setActiveTripIdState] = useState<string | null>(null);
   const [syncError, setSyncError] = useState('');
   const [booting, setBooting] = useState(true);
+  const [cloudSyncing, setCloudSyncing] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
 
   const cloudRef = useRef<CloudContext | null>(null);
+  const schemaCheckedRef = useRef(false);
+  const tracksLoadedRef = useRef(false);
   const lastLivePushRef = useRef(0);
   const lastLiveCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   const userLocationRef = useRef<GpsPoint | null>(null);
@@ -251,10 +255,49 @@ export default function App() {
     setTracks(bundle.tracks);
     currentFriendIdRef.current = selectedFriendId;
     setCurrentFriendId(selectedFriendId);
-    await mirrorLocal({ ...bundle, friends: visibleFriends, currentFriendId: selectedFriendId });
+    void mirrorLocal({ ...bundle, friends: visibleFriends, currentFriendId: selectedFriendId });
   };
 
-  const connectCloud = async (options?: { cloudOnly?: boolean; migrateLocal?: boolean }) => {
+  const loadLocalCache = async () => {
+    const rawFriends = await dbService.getFriends();
+    const f = hydrateFriendAvatars(rawFriends);
+    const p = await dbService.getPois();
+    const j = await dbService.getJournal();
+    const e = await dbService.getExpenses();
+    const ph = await dbService.getPhotos();
+    const w = await dbService.getWaypoints();
+    const t = await dbService.getTracks();
+    const currF = await dbService.getCurrentFriendId();
+
+    setFriends(f);
+    setPois(p);
+    setJournal(j);
+    setExpenses(e);
+    setPhotos(ph);
+    setWaypoints(w);
+    setTracks(t);
+    const initialFriendId = currF || f[0]?.id || 'adel';
+    currentFriendIdRef.current = initialFriendId;
+    setCurrentFriendId(initialFriendId);
+  };
+
+  const refreshFromCloud = async (
+    ctx: CloudContext,
+    options?: LoadTripBundleOptions & { persist?: boolean }
+  ) => {
+    const bundle = await loadTripBundle(ctx, options);
+    await applyBundle(bundle, ctx.user.id);
+    if (options?.includeTrackPoints) tracksLoadedRef.current = true;
+    return bundle;
+  };
+
+  const connectCloud = async (options?: {
+    cloudOnly?: boolean;
+    migrateLocal?: boolean;
+    skipCrewBootstrap?: boolean;
+    skipSessionEnsure?: boolean;
+    fastOnly?: boolean;
+  }) => {
     setSyncError('');
     if (!isCloudConfigured()) {
       cloudRef.current = null;
@@ -262,9 +305,11 @@ export default function App() {
       return false;
     }
 
+    setCloudSyncing(true);
     try {
-      await ensureCrewSession(resolvePreferredCrewName());
-      void backfillCrewProfileAvatars();
+      if (!options?.skipSessionEnsure) {
+        await ensureCrewSession(resolvePreferredCrewName());
+      }
 
       let ctx = await bootstrapCloud();
       if (!ctx) {
@@ -275,7 +320,9 @@ export default function App() {
       }
 
       try {
-        ctx = await ensureSharedCrewTrip(ctx);
+        ctx = await ensureSharedCrewTrip(ctx, {
+          skipCrewBootstrap: options?.skipCrewBootstrap ?? options?.cloudOnly,
+        });
       } catch (crewErr) {
         console.warn('Crew trip sync failed', crewErr);
       }
@@ -283,14 +330,21 @@ export default function App() {
       cloudRef.current = ctx;
       setActiveTripIdState(ctx.tripId);
 
-      let bundle = await loadTripBundle(ctx);
-
-      const schemaIssues = await verifyCloudSchema(ctx);
-      if (schemaIssues.length) {
-        console.warn('Schéma Supabase incomplet (VanPay):', schemaIssues.join(', '));
+      if (!schemaCheckedRef.current) {
+        schemaCheckedRef.current = true;
+        const schemaIssues = await verifyCloudSchema(ctx);
+        if (schemaIssues.length) {
+          console.warn('Schéma Supabase incomplet (VanPay):', schemaIssues.join(', '));
+        }
       }
 
-      await applyBundle(bundle, ctx.user.id);
+      await refreshFromCloud(ctx, { includeTrackPoints: false });
+
+      if (!options?.fastOnly) {
+        void refreshFromCloud(ctx, { includeTrackPoints: true }).catch((err) => {
+          console.warn('Deferred track load failed', err);
+        });
+      }
 
       if (options?.migrateLocal && !options?.cloudOnly) {
         const local = {
@@ -319,41 +373,20 @@ export default function App() {
       cloudRef.current = null;
       setCloudReady(false);
       return false;
+    } finally {
+      setCloudSyncing(false);
     }
   };
 
   useEffect(() => {
     async function init() {
-      if (isCloudConfigured()) {
-        await connectCloud({ migrateLocal: true });
-        setBooting(false);
-        return;
-      }
-
-      const rawFriends = await dbService.getFriends();
-      const f = hydrateFriendAvatars(rawFriends);
-      if (rawFriends.some((friend, index) => friend.avatar !== f[index]?.avatar)) {
-        await dbService.saveFriends(f);
-      }
-      const p = await dbService.getPois();
-      const j = await dbService.getJournal();
-      const e = await dbService.getExpenses();
-      const ph = await dbService.getPhotos();
-      const w = await dbService.getWaypoints();
-      const t = await dbService.getTracks();
-      const currF = await dbService.getCurrentFriendId();
-
-      setFriends(hydrateFriendAvatars(f));
-      setPois(p);
-      setJournal(j);
-      setExpenses(e);
-      setPhotos(ph);
-      setWaypoints(w);
-      setTracks(t);
-      const initialFriendId = currF || 'adel';
-      currentFriendIdRef.current = initialFriendId;
-      setCurrentFriendId(initialFriendId);
+      await loadLocalCache();
       setBooting(false);
+
+      if (isCloudConfigured()) {
+        void connectCloud({ migrateLocal: true });
+        void backfillCrewProfileAvatars();
+      }
     }
     void init();
   }, []);
@@ -365,23 +398,24 @@ export default function App() {
     let refreshTimer: number | undefined;
     let refreshing = false;
 
-    const refreshTripBundle = async () => {
+    const refreshTripBundle = async (includeTrackPoints = false) => {
       if (refreshing) return;
       refreshing = true;
+      setCloudSyncing(true);
       try {
-        const bundle = await loadTripBundle(ctx);
-        await applyBundle(bundle, ctx.user.id);
+        await refreshFromCloud(ctx, { includeTrackPoints });
       } catch (err) {
         console.warn('Trip refresh failed', err);
       } finally {
         refreshing = false;
+        setCloudSyncing(false);
       }
     };
 
     const scheduleRefresh = () => {
       window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => {
-        void refreshTripBundle();
+        void refreshTripBundle(tracksLoadedRef.current);
       }, SYNC_DEBOUNCE_MS);
     };
 
@@ -600,6 +634,26 @@ export default function App() {
     return stop;
   }, [powerProfile]);
 
+  useEffect(() => {
+    const ctx = cloudRef.current;
+    if (!cloudReady || !ctx || activeTab !== 'map' || tracksLoadedRef.current) return;
+    void refreshFromCloud(ctx, { includeTrackPoints: true }).catch((err) => {
+      console.warn('Map track load failed', err);
+    });
+  }, [activeTab, cloudReady]);
+
+  const handleManualRefresh = () => {
+    const ctx = cloudRef.current;
+    if (!ctx) {
+      void connectCloud({ migrateLocal: false });
+      return;
+    }
+    setCloudSyncing(true);
+    void refreshFromCloud(ctx, { includeTrackPoints: true })
+      .catch((err) => console.warn('Manual refresh failed', err))
+      .finally(() => setCloudSyncing(false));
+  };
+
   const resolveCrewAccountName = (friend: Friend): CrewMemberName | undefined => {
     const fromRef = crewAccountNamesRef.current[friend.id];
     if (fromRef) return fromRef;
@@ -616,7 +670,9 @@ export default function App() {
       friends.find((candidate) => crewAccountNamesRef.current[candidate.id] === name) ??
       friends.find((candidate) => candidate.name.trim().toLowerCase() === name.toLowerCase());
     if (friend) void handleCurrentFriendChange(friend.id);
-    else void switchToCrewMember(name).then(() => connectCloud({ cloudOnly: true }));
+    else void switchToCrewMember(name).then(() =>
+      connectCloud({ cloudOnly: true, skipCrewBootstrap: true, skipSessionEnsure: true })
+    );
   };
 
   const handleUpdateOwnProfile = async (patch: { name: string; avatar: string }) => {
@@ -673,19 +729,29 @@ export default function App() {
     const needsAuthSwitch = Boolean(ctx && crewAccountName && id !== ctx.user.id);
 
     if (needsAuthSwitch && crewAccountName) {
-      setBooting(true);
-      setCloudReady(false);
+      setCloudSyncing(true);
       setSyncError('');
       try {
         const user = await switchToCrewMember(crewAccountName);
         currentFriendIdRef.current = user.id;
         setCurrentFriendId(user.id);
         await dbService.saveCurrentFriendId(user.id);
-        await connectCloud({ cloudOnly: true });
+
+        let ctx = await bootstrapCloud();
+        if (!ctx) throw new Error('Session cloud indisponible.');
+        ctx = await ensureSharedCrewTrip(ctx, { skipCrewBootstrap: true });
+        cloudRef.current = ctx;
+        setActiveTripIdState(ctx.tripId);
+        setCloudReady(true);
+
+        await refreshFromCloud(ctx, { includeTrackPoints: false });
+        void refreshFromCloud(ctx, { includeTrackPoints: true }).catch((err) => {
+          console.warn('Deferred track load failed', err);
+        });
       } catch (err) {
         setSyncError(toUserFacingError(err, `Impossible de passer sur le profil ${friend.name}.`));
       } finally {
-        setBooting(false);
+        setCloudSyncing(false);
       }
       return;
     }
@@ -695,12 +761,10 @@ export default function App() {
     void dbService.saveCurrentFriendId(id);
 
     if (ctx && isCloudConfigured()) {
-      try {
-        const bundle = await loadTripBundle(ctx);
-        await applyBundle(bundle, ctx.user.id);
-      } catch (err) {
-        console.warn('Trip reload on profile change failed', err);
-      }
+      setCloudSyncing(true);
+      void refreshFromCloud(ctx, { includeTrackPoints: tracksLoadedRef.current }).finally(() => {
+        setCloudSyncing(false);
+      });
     }
   };
 
@@ -939,6 +1003,8 @@ export default function App() {
         geoStatus={geoStatus}
         hasUserLocation={Boolean(userLocation)}
         booting={booting}
+        isRefreshing={cloudSyncing}
+        onRefresh={handleManualRefresh}
         immersive={activeTab === 'map'}
         syncError={syncError ? toUserFacingError(syncError) : ''}
         onDismissSyncError={() => setSyncError('')}
@@ -1061,7 +1127,7 @@ export default function App() {
         isOpen={isAuthModalOpen}
         allowDismiss
         onClose={() => setIsAuthModalOpen(false)}
-        onAuthenticated={() => void connectCloud()}
+        onAuthenticated={() => void connectCloud({ migrateLocal: true })}
       />
     </div>
   );

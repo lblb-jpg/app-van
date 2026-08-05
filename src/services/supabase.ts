@@ -13,6 +13,8 @@ export interface SupabaseConfig {
 
 const DISPLAY_NAME_KEY = 'van_display_name_v1';
 const CREW_USER_MAP_KEY = 'van_crew_user_map_v1';
+const CREW_BOOTSTRAP_KEY = 'van_crew_bootstrap_at_v1';
+const CREW_BOOTSTRAP_TTL_MS = 6 * 60 * 60 * 1000;
 
 let client: SupabaseClient | null = null;
 let clientKey: string | null = null;
@@ -44,6 +46,23 @@ export function saveCrewUserId(name: CrewMemberName, userId: string) {
 export function resolveCrewNameByUserId(userId: string): CrewMemberName | undefined {
   const map = getStoredCrewUserMap();
   return CREW_MEMBER_NAMES.find((name) => map[name] === userId);
+}
+
+export function shouldRunCrewBootstrap() {
+  try {
+    const last = Number(localStorage.getItem(CREW_BOOTSTRAP_KEY) || 0);
+    return !last || Date.now() - last > CREW_BOOTSTRAP_TTL_MS;
+  } catch {
+    return true;
+  }
+}
+
+export function markCrewBootstrapDone() {
+  try {
+    localStorage.setItem(CREW_BOOTSTRAP_KEY, String(Date.now()));
+  } catch {
+    // ignore
+  }
 }
 
 function stripQuotes(value: string) {

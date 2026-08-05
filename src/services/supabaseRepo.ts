@@ -14,7 +14,7 @@ import type {
 } from '../types';
 import { inferMediaType } from '../lib/mediaUtils';
 import { CREW_DEFAULT_COLORS, resolveFriendAvatar } from '../lib/crewAvatars';
-import { ensureSupabaseSession, ensureCrewAccounts, getSupabaseClient, isCrewMemberName } from './supabase';
+import { ensureSupabaseSession, ensureCrewAccounts, getSupabaseClient, isCrewMemberName, markCrewBootstrapDone, shouldRunCrewBootstrap } from './supabase';
 
 const TRIP_KEY = 'van_current_trip_id_v1';
 const CREW_INVITE_KEY = 'van_crew_invite_code_v1';
@@ -103,14 +103,9 @@ async function resolvePhotoUrl(storagePath: string, supabase: SupabaseClient) {
   }
 
   const path = extractTripPhotoStoragePath(storagePath);
-  if (!path) return storagePath; // External URL (Unsplash, etc.)
+  if (!path) return storagePath;
 
-  // Private bucket: signed URL required for <img src>.
-  const { data: signed, error } = await supabase.storage
-    .from('trip-photos')
-    .createSignedUrl(path, 60 * 60 * 24);
-  if (!error && signed?.signedUrl) return signed.signedUrl;
-
+  // Bucket public (ensure_full_sync.sql) — URL directe, sans requête signed URL.
   const { data } = supabase.storage.from('trip-photos').getPublicUrl(path);
   return data.publicUrl;
 }
@@ -331,26 +326,11 @@ async function pickBestMembershipTrip(supabase: SupabaseClient, userId: string) 
   const { data: memberships, error } = await supabase
     .from('trip_members')
     .select('trip_id')
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .order('joined_at', { ascending: false })
+    .limit(1);
   if (error) throw error;
-  if (!memberships?.length) return null;
-
-  let bestTripId = memberships[0].trip_id as string;
-  let bestCount = -1;
-  for (const row of memberships) {
-    const tripId = row.trip_id as string;
-    const { count, error: countError } = await supabase
-      .from('trip_members')
-      .select('*', { count: 'exact', head: true })
-      .eq('trip_id', tripId);
-    if (countError) continue;
-    const memberCount = count ?? 0;
-    if (memberCount > bestCount) {
-      bestCount = memberCount;
-      bestTripId = tripId;
-    }
-  }
-  return bestTripId;
+  return (memberships?.[0]?.trip_id as string | undefined) ?? null;
 }
 
 /** Garantit que le compte connecté peut créer du contenu (rôle editor ou owner). */
@@ -390,14 +370,25 @@ async function ensureTripEditorMembership(ctx: CloudContext) {
   }
 }
 
-export async function ensureSharedCrewTrip(ctx: CloudContext): Promise<CloudContext> {
+export async function ensureSharedCrewTrip(
+  ctx: CloudContext,
+  options?: { skipCrewBootstrap?: boolean }
+): Promise<CloudContext> {
   let inviteCode = getStoredCrewInviteCode();
   if (!inviteCode) {
     inviteCode = await getTripInviteCode(ctx);
     saveCrewInviteCode(inviteCode);
   }
 
-  await ensureCrewAccounts(inviteCode);
+  if (!options?.skipCrewBootstrap && shouldRunCrewBootstrap()) {
+    try {
+      await ensureCrewAccounts(inviteCode);
+      markCrewBootstrapDone();
+    } catch (crewErr) {
+      console.warn('Crew bootstrap skipped:', crewErr);
+    }
+  }
+
   const sharedTripId = await joinTripByCode(ctx, inviteCode);
   const nextCtx =
     sharedTripId === ctx.tripId ? ctx : { ...ctx, tripId: sharedTripId };
@@ -556,7 +547,13 @@ export function setActiveTripId(tripId: string) {
   localStorage.setItem(TRIP_KEY, tripId);
 }
 
-export async function loadTripBundle(ctx: CloudContext) {
+export type LoadTripBundleOptions = {
+  /** Charge les points GPS (lourd) — false par défaut pour un affichage rapide. */
+  includeTrackPoints?: boolean;
+};
+
+export async function loadTripBundle(ctx: CloudContext, options?: LoadTripBundleOptions) {
+  const includeTrackPoints = options?.includeTrackPoints ?? false;
   const { supabase, user, tripId } = ctx;
 
   const [
@@ -645,13 +642,19 @@ export async function loadTripBundle(ctx: CloudContext) {
       })
   );
 
-  const photosByNote = new Map<string, string[]>();
-  for (const row of photosRes.data ?? []) {
-    if (!row.journal_note_id) continue;
-    const list = photosByNote.get(row.journal_note_id) ?? [];
-    list.push(await resolvePhotoUrl(row.storage_path, supabase));
-    photosByNote.set(row.journal_note_id, list);
-  }
+  const journalPhotoRows = (photosRes.data ?? []).filter((row) => row.journal_note_id);
+  const journalPhotoUrls = await Promise.all(
+    journalPhotoRows.map(async (row) => ({
+      noteId: row.journal_note_id as string,
+      url: await resolvePhotoUrl(row.storage_path, supabase),
+    }))
+  );
+  const photosByNote = journalPhotoUrls.reduce((acc, item) => {
+    const list = acc.get(item.noteId) ?? [];
+    list.push(item.url);
+    acc.set(item.noteId, list);
+    return acc;
+  }, new Map<string, string[]>());
 
   const journal: JournalNote[] = (journalRes.data ?? []).map((row) => ({
     id: row.id,
@@ -686,7 +689,7 @@ export async function loadTripBundle(ctx: CloudContext) {
 
   const trackIds = (tracksRes.data ?? []).map((t) => t.id);
   let pointsByTrack = new Map<string, GpsPoint[]>();
-  if (trackIds.length) {
+  if (includeTrackPoints && trackIds.length) {
     const { data: points, error: pointsError } = await supabase
       .from('gps_track_points')
       .select('*')
