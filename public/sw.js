@@ -1,5 +1,5 @@
 /* Vanlife Club — service worker (mobile PWA shell) */
-const CACHE = 'vanlife-club-v3';
+const CACHE = 'vanlife-club-v4';
 const PRECACHE = ['/', '/index.html', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
@@ -44,12 +44,18 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets: stale-while-revalidate.
+  // Static assets: stale-while-revalidate (never cache HTML as JS/CSS).
   event.respondWith(
     caches.match(request).then((cached) => {
       const fetching = fetch(request)
         .then((response) => {
-          if (response && response.ok) {
+          const ct = response.headers.get('content-type') || '';
+          const path = url.pathname;
+          const looksLikeAsset =
+            (path.endsWith('.js') && (ct.includes('javascript') || ct.includes('ecmascript'))) ||
+            (path.endsWith('.css') && ct.includes('css')) ||
+            (!path.endsWith('.js') && !path.endsWith('.css'));
+          if (response && response.ok && looksLikeAsset) {
             const copy = response.clone();
             void caches.open(CACHE).then((cache) => cache.put(request, copy));
           }

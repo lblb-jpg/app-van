@@ -42,7 +42,7 @@ export const WalkieTalkie: React.FC<WalkieTalkieProps> = ({
               </div>
               <h2 className="mt-1 text-xl font-extrabold tracking-tight sm:text-2xl">Talkie équipage</h2>
               <p className="mt-1 text-[11px] font-semibold text-white/45">
-                Maintiens le bouton : ta voix sort tout de suite sur leurs téléphones.
+                Maintiens le bouton : ta voix sort sur tous les téléphones de l’équipage.
               </p>
             </div>
             <span className={`max-w-[42%] shrink-0 text-right leading-tight rounded-full px-3 py-1.5 text-[9px] font-extrabold ${

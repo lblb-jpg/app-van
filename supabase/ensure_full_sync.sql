@@ -137,7 +137,8 @@ begin
     'gps_track_points',
     'member_locations',
     'trip_members',
-    'trips'
+    'trips',
+    'profiles'
   ]
   loop
     begin

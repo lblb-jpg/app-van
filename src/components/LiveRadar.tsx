@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Radio,
   ArrowUpRight,
@@ -241,6 +242,20 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
     });
     setEditingFriend(null);
   };
+
+  useEffect(() => {
+    if (!editingFriend) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setEditingFriend(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [editingFriend]);
 
   return (
     <div className="page-pad space-y-3 sm:space-y-4">
@@ -605,87 +620,106 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
         </div>
       </div>
 
-      {editingFriend && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#17352b]/45 p-4 backdrop-blur-xs sm:items-center">
-          <form
-            onSubmit={saveProfileSettings}
-            className="w-full max-w-sm rounded-[1.75rem] bg-white p-5 shadow-2xl"
+      {editingFriend &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[90] flex items-center justify-center bg-[#17352b]/50 px-4 py-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,calc(env(safe-area-inset-bottom)+0.5rem))] backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="crew-settings-title"
+            onClick={() => setEditingFriend(null)}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[9px] font-extrabold uppercase tracking-[.16em] text-[#eb6c32]">
-                  Réglages équipage
-                </p>
-                <h3 className="mt-1 text-base font-extrabold text-[#17352b]">
-                  Modifier le profil
-                </h3>
+            <form
+              onSubmit={saveProfileSettings}
+              onClick={(event) => event.stopPropagation()}
+              className="van-install-sheet relative w-full max-w-[22rem] max-h-[min(88dvh,36rem)] overflow-y-auto overscroll-contain rounded-[1.75rem] p-5 shadow-[0_28px_70px_rgba(23,53,43,.28)] sm:p-6"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[9px] font-extrabold uppercase tracking-[.16em] text-[#eb6c32]">
+                    Réglages équipage
+                  </p>
+                  <h3
+                    id="crew-settings-title"
+                    className="mt-1 text-base font-extrabold leading-snug text-[#17352b]"
+                  >
+                    Modifier le profil
+                  </h3>
+                  <p className="mt-1 truncate text-[11px] font-semibold text-zinc-500">
+                    {editingFriend.name}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingFriend(null)}
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-zinc-100 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-800"
+                  aria-label="Fermer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setEditingFriend(null)}
-                className="grid h-11 w-11 place-items-center rounded-xl bg-zinc-100 text-zinc-500"
-                aria-label="Fermer"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
 
-            <div className="mt-5 flex items-center gap-4">
-              <div className="relative shrink-0">
-                <img
-                  src={editAvatar}
-                  alt=""
-                  className="h-20 w-20 rounded-[1.4rem] object-cover ring-2 ring-zinc-100"
-                />
-                <label className="absolute -bottom-1 -right-1 grid h-8 w-8 cursor-pointer place-items-center rounded-xl bg-[#eb6c32] text-white shadow-md">
-                  <Camera className="h-4 w-4" />
+              <div className="mt-5 flex flex-col items-center gap-4 sm:flex-row sm:items-center">
+                <div className="relative shrink-0">
+                  <img
+                    src={editAvatar}
+                    alt=""
+                    className="h-24 w-24 rounded-[1.5rem] object-cover ring-2 ring-zinc-100 shadow-md"
+                  />
+                  <label className="absolute -bottom-1 -right-1 grid h-10 w-10 cursor-pointer place-items-center rounded-xl bg-[#eb6c32] text-white shadow-md ring-2 ring-white transition hover:bg-[#d85f28]">
+                    <Camera className="h-4 w-4" />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(event) => void handleProfilePhoto(event.target.files?.[0])}
+                    />
+                  </label>
+                </div>
+
+                <label className="min-w-0 w-full flex-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                    Nom affiché
+                  </span>
                   <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(event) => void handleProfilePhoto(event.target.files?.[0])}
+                    autoFocus
+                    required
+                    maxLength={30}
+                    value={editName}
+                    onChange={(event) => setEditName(event.target.value)}
+                    className="mt-1.5 w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 py-3 text-sm font-bold text-zinc-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                    placeholder="Prénom ou surnom"
                   />
                 </label>
               </div>
 
-              <label className="min-w-0 flex-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                  Nom affiché
-                </span>
-                <input
-                  autoFocus
-                  required
-                  maxLength={30}
-                  value={editName}
-                  onChange={(event) => setEditName(event.target.value)}
-                  className="mt-1.5 w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 py-2.5 text-sm font-bold text-zinc-900 outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </label>
-            </div>
+              {photoError && (
+                <p className="mt-3 text-center text-[10px] font-semibold text-red-600 sm:text-left">
+                  {photoError}
+                </p>
+              )}
 
-            {photoError && (
-              <p className="mt-3 text-[10px] font-semibold text-red-600">{photoError}</p>
-            )}
-
-            <div className="mt-5 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setEditingFriend(null)}
-                className="rounded-2xl bg-zinc-100 py-3 text-xs font-bold text-zinc-600"
-              >
-                Annuler
-              </button>
-              <button
-                type="submit"
-                disabled={!editName.trim()}
-                className="rounded-2xl bg-[#17352b] py-3 text-xs font-extrabold text-white disabled:opacity-40"
-              >
-                Enregistrer
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+              <div className="mt-6 grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setEditingFriend(null)}
+                  className="min-h-12 rounded-2xl bg-zinc-100 py-3 text-xs font-bold text-zinc-600 transition hover:bg-zinc-200"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={!editName.trim()}
+                  className="min-h-12 rounded-2xl bg-[#17352b] py-3 text-xs font-extrabold text-white transition hover:bg-[#214538] disabled:opacity-40"
+                >
+                  Enregistrer
+                </button>
+              </div>
+            </form>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

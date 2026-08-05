@@ -2,6 +2,11 @@ import express from "express";
 import path from "path";
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
+import {
+  buildVanSpotOverpassQuery,
+  mapOverpassToSpots,
+  shortPlaceName,
+} from "./src/services/vanSpotEngine";
 
 dotenv.config();
 dotenv.config({ path: ".env.local", override: true });
@@ -134,49 +139,8 @@ app.get("/api/supabase/status", (req, res) => {
   });
 });
 
-type OsmTags = Record<string, string>;
-
 const vanSpotCache = new Map<string, { expiresAt: number; payload: unknown }>();
 const francePlaceCache = new Map<string, { expiresAt: number; payload: unknown }>();
-
-function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number) {
-  const radius = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2
-    + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-  return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function yesNo(value?: string) {
-  if (!value) return undefined;
-  if (["yes", "designated", "permissive"].includes(value)) return true;
-  if (["no", "private"].includes(value)) return false;
-  return undefined;
-}
-
-function classifyVanSpot(tags: OsmTags) {
-  if (tags.amenity === "motorhome_stopover") {
-    return { type: "motorhome_stopover", label: "Aire camping-car", confidence: "official", score: 1200 };
-  }
-  if (tags.tourism === "caravan_site") {
-    return { type: "caravan_site", label: "Aire / camping-car", confidence: "official", score: 1150 };
-  }
-  if (tags.tourism === "camp_site") {
-    return { type: "camp_site", label: "Camping", confidence: "official", score: 1080 };
-  }
-  if (tags.highway === "rest_area") {
-    return { type: "rest_area", label: "Aire de repos", confidence: "likely", score: 760 };
-  }
-  if (tags.tourism === "picnic_site") {
-    return { type: "picnic_site", label: "Aire de pique-nique", confidence: "verify", score: 500 };
-  }
-  const motorhome = tags.motorhome || tags.caravan;
-  if (motorhome === "yes" || motorhome === "designated") {
-    return { type: "van_parking", label: "Parking van signalé", confidence: "likely", score: 820 };
-  }
-  return { type: "parking", label: "Parking à vérifier", confidence: "verify", score: 350 };
-}
 
 async function fetchJson(url: string, init: RequestInit, timeoutMs: number) {
   const controller = new AbortController();
@@ -239,48 +203,51 @@ app.get("/api/van-spots/search", async (req, res) => {
   const hasSuppliedCoordinates = Number.isFinite(suppliedLat) && Number.isFinite(suppliedLng);
   if (query.length < 2) return res.status(400).json({ error: "Indique une ville ou un village." });
 
-  const cacheKey = `${query.toLocaleLowerCase("fr")}:${hasSuppliedCoordinates ? `${suppliedLat.toFixed(4)},${suppliedLng.toFixed(4)}` : "geo"}:${radiusKm}`;
+  const cacheKey = `${query.toLocaleLowerCase("fr")}:${hasSuppliedCoordinates ? `${suppliedLat.toFixed(4)},${suppliedLng.toFixed(4)}` : "geo"}:${radiusKm}:v2`;
   const cached = vanSpotCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return res.json(cached.payload);
 
   try {
-    let place: any;
+    let placeName: string;
+    let placeType = "commune";
     let lat: number;
     let lng: number;
+
     if (hasSuppliedCoordinates) {
       lat = suppliedLat;
       lng = suppliedLng;
-      place = { display_name: String(req.query.label || query), type: "commune" };
+      placeName = shortPlaceName(String(req.query.label || query), query);
+      placeType = String(req.query.label || "").toLowerCase().includes("position") ? "gps" : "commune";
     } else {
-      const geocodingUrl = new URL("https://nominatim.openstreetmap.org/search");
-      geocodingUrl.searchParams.set("q", `${query}, France`);
-      geocodingUrl.searchParams.set("countrycodes", "fr");
-      geocodingUrl.searchParams.set("format", "jsonv2");
-      geocodingUrl.searchParams.set("addressdetails", "1");
-      geocodingUrl.searchParams.set("limit", "1");
-      geocodingUrl.searchParams.set("accept-language", "fr");
-      const geocoding = await fetchJson(geocodingUrl.toString(), {
-        headers: {
-          "User-Agent": "VanlifeClub/1.0 (internal road-trip planner)",
-          "Accept-Language": "fr",
-        },
-      }, 10_000) as any[];
-      if (!geocoding.length) return res.status(404).json({ error: "Ville ou village introuvable." });
-      place = geocoding[0];
-      lat = Number(place.lat);
-      lng = Number(place.lon);
-    }
-    const radiusMeters = Math.round(radiusKm * 1000);
-    const overpassQuery = `[out:json][timeout:25];
-(
-  nwr(around:${radiusMeters},${lat},${lng})["amenity"="motorhome_stopover"];
-  nwr(around:${radiusMeters},${lat},${lng})["tourism"~"^(camp_site|caravan_site|picnic_site)$"];
-  nwr(around:${radiusMeters},${lat},${lng})["highway"="rest_area"];
-  nwr(around:${radiusMeters},${lat},${lng})["amenity"="parking"]["motorhome"~"^(yes|designated)$"];
-);
-out center tags 120;`;
+      const geoUrl = new URL("https://geo.api.gouv.fr/communes");
+      geoUrl.searchParams.set("nom", query);
+      geoUrl.searchParams.set("fields", "nom,centre,population");
+      geoUrl.searchParams.set("boost", "population");
+      geoUrl.searchParams.set("limit", "5");
+      const communes = await fetchJson(geoUrl.toString(), {
+        headers: { "User-Agent": "VanlifeClub/1.0 (internal road-trip planner)" },
+      }, 10_000) as Array<{ nom?: string; population?: number; centre?: { coordinates?: [number, number] } }>;
 
-    let overpass: any = null;
+      const normalized = query.toLocaleLowerCase("fr");
+      const ranked = communes
+        .filter((item) => Array.isArray(item.centre?.coordinates))
+        .sort((a, b) => {
+          const aExact = (a.nom || "").toLocaleLowerCase("fr") === normalized ? 1 : 0;
+          const bExact = (b.nom || "").toLocaleLowerCase("fr") === normalized ? 1 : 0;
+          if (aExact !== bExact) return bExact - aExact;
+          return (b.population || 0) - (a.population || 0);
+        });
+      const commune = ranked[0];
+      if (!commune?.centre?.coordinates) {
+        return res.status(404).json({ error: "Ville ou village introuvable." });
+      }
+      placeName = commune.nom || query;
+      lat = commune.centre.coordinates[1];
+      lng = commune.centre.coordinates[0];
+    }
+
+    const overpassQuery = buildVanSpotOverpassQuery(lat, lng, Math.round(radiusKm * 1000));
+    let overpass: { elements?: unknown[] } | null = null;
     const overpassEndpoints = [
       "https://overpass-api.de/api/interpreter",
       "https://overpass.kumi.systems/api/interpreter",
@@ -297,7 +264,7 @@ out center tags 120;`;
             "Accept": "application/json",
           },
           body: new URLSearchParams({ data: overpassQuery }),
-        }, 32_000);
+        }, 32_000) as { elements?: unknown[] };
         break;
       } catch (error) {
         console.warn(`Overpass failed (${endpoint}):`, error);
@@ -305,77 +272,20 @@ out center tags 120;`;
     }
     if (!overpass) throw new Error("Les données cartographiques sont momentanément indisponibles.");
 
-    const spots = (overpass.elements || [])
-      .map((element: any) => {
-        const tags = (element.tags || {}) as OsmTags;
-        const spotLat = Number(element.lat ?? element.center?.lat);
-        const spotLng = Number(element.lon ?? element.center?.lon);
-        if (!Number.isFinite(spotLat) || !Number.isFinite(spotLng)) return null;
-        const classification = classifyVanSpot(tags);
-        const distance = distanceKm(lat, lng, spotLat, spotLng);
-        const amenityFlags = [
-          tags.drinking_water === "yes" || tags.water_point === "yes" ? "Eau potable" : null,
-          tags.toilets === "yes" ? "Toilettes" : null,
-          tags.shower === "yes" ? "Douches" : null,
-          tags.electricity === "yes" || tags.power_supply === "yes" ? "Électricité" : null,
-          tags.sanitary_dump_station === "yes" ? "Vidange" : null,
-          tags.waste_disposal === "yes" ? "Poubelles" : null,
-          tags.internet_access === "wlan" || tags.internet_access === "yes" ? "Wi-Fi" : null,
-        ].filter(Boolean);
-        const detailsCount = amenityFlags.length + ["fee", "opening_hours", "capacity", "website", "phone"]
-          .filter((key) => tags[key]).length;
-        return {
-          id: `${element.type}-${element.id}`,
-          osmType: element.type,
-          osmId: element.id,
-          name: tags.name || tags["name:fr"] || classification.label,
-          ...classification,
-          lat: spotLat,
-          lng: spotLng,
-          distanceKm: Number(distance.toFixed(1)),
-          score: classification.score + detailsCount * 18 + (tags.name ? 35 : 0) - distance * 3,
-          address: [
-            tags["addr:housenumber"],
-            tags["addr:street"],
-            tags["addr:place"],
-            tags["addr:city"],
-          ].filter(Boolean).join(" ") || undefined,
-          amenities: amenityFlags,
-          fee: tags.fee,
-          feeAmount: tags.charge,
-          openingHours: tags.opening_hours,
-          capacity: tags.capacity || tags["capacity:caravans"],
-          maxstay: tags.maxstay,
-          access: tags.access,
-          surface: tags.surface,
-          lit: yesNo(tags.lit),
-          reservation: tags.reservation,
-          website: tags.website || tags["contact:website"],
-          phone: tags.phone || tags["contact:phone"],
-          operator: tags.operator,
-          description: tags.description || tags.note,
-          sourceUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`,
-          navigationUrl: `https://www.google.com/maps/dir/?api=1&destination=${spotLat},${spotLng}`,
-        };
-      })
-      .filter(Boolean)
-      .sort((a: any, b: any) => b.score - a.score)
-      .slice(0, 80)
-      .map(({ score, ...spot }: any) => spot);
-
+    const spots = mapOverpassToSpots(overpass.elements || [], lat, lng);
     const payload = {
       query,
       place: {
-        name: place.display_name,
+        name: placeName,
         lat,
         lng,
-        type: place.type,
+        type: placeType,
       },
       radiusKm,
       count: spots.length,
       spots,
-      attribution: "Données © contributeurs OpenStreetMap, recherche Overpass",
-      notice: "Vérifie toujours la signalisation locale. Un parking public n’autorise pas nécessairement le stationnement de nuit.",
+      attribution: "Données © contributeurs OpenStreetMap",
+      notice: "Priorité aux aires et parkings van recensés. Vérifie toujours panneau et règlement local avant de dormir.",
     };
     vanSpotCache.set(cacheKey, { expiresAt: Date.now() + 30 * 60_000, payload });
     return res.json(payload);

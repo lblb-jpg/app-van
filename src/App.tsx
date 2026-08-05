@@ -37,8 +37,17 @@ import {
   setActiveTripId,
   subscribeTripRealtime,
   updateWaypointStatus as cloudUpdateWaypointStatus,
+  updateOwnProfile,
   upsertLiveLocation,
 } from './services/supabaseRepo';
+import {
+  SYNC_ACTIVE_LABEL_TICK_MS,
+  SYNC_DEBOUNCE_MS,
+  SYNC_FULL_INTERVAL_MS,
+  SYNC_LIVE_LOCATION_MOVE_M,
+  SYNC_LIVE_LOCATION_POLL_MS,
+  SYNC_LIVE_LOCATION_PUSH_MS,
+} from './services/syncConfig';
 import { Navigation } from './components/Navigation';
 import { MapView } from './components/MapView';
 import { GpsTracker } from './components/GpsTracker';
@@ -358,16 +367,26 @@ export default function App() {
     if (!cloudReady || !ctx) return;
 
     let refreshTimer: number | undefined;
+    let refreshing = false;
+
+    const refreshTripBundle = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const bundle = await loadTripBundle(ctx);
+        await applyBundle(bundle, ctx.user.id);
+      } catch (err) {
+        console.warn('Trip refresh failed', err);
+      } finally {
+        refreshing = false;
+      }
+    };
+
     const scheduleRefresh = () => {
       window.clearTimeout(refreshTimer);
-      refreshTimer = window.setTimeout(async () => {
-        try {
-          const bundle = await loadTripBundle(ctx);
-          await applyBundle(bundle, ctx.user.id);
-        } catch (err) {
-          console.warn('Realtime refresh failed', err);
-        }
-      }, 450);
+      refreshTimer = window.setTimeout(() => {
+        void refreshTripBundle();
+      }, SYNC_DEBOUNCE_MS);
     };
 
     const patchFriendLocation = (
@@ -451,7 +470,21 @@ export default function App() {
           });
         })
         .catch((err) => console.warn('Live location poll failed', err));
-    }, 12_000);
+    }, SYNC_LIVE_LOCATION_POLL_MS);
+
+    const fullSyncInterval = window.setInterval(() => {
+      void refreshTripBundle();
+    }, SYNC_FULL_INTERVAL_MS);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') scheduleRefresh();
+    };
+    const onWindowFocus = () => scheduleRefresh();
+    const onOnline = () => scheduleRefresh();
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', onWindowFocus);
+    window.addEventListener('online', onOnline);
 
     const tickActiveLabels = window.setInterval(() => {
       setFriends((prev) =>
@@ -461,12 +494,16 @@ export default function App() {
             : friend
         )
       );
-    }, 20_000);
+    }, SYNC_ACTIVE_LABEL_TICK_MS);
 
     return () => {
       window.clearTimeout(refreshTimer);
       window.clearInterval(pollLocations);
+      window.clearInterval(fullSyncInterval);
       window.clearInterval(tickActiveLabels);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', onWindowFocus);
+      window.removeEventListener('online', onOnline);
       unsubscribe();
     };
   }, [cloudReady, activeTripId]);
@@ -530,8 +567,8 @@ export default function App() {
           const movedMeters = prev
             ? calculateHaversineDistance(prev.lat, prev.lng, latitude, longitude) * 1000
             : Number.POSITIVE_INFINITY;
-          const dueByTime = now - lastLivePushRef.current > 3000;
-          const dueByMove = movedMeters > 18;
+          const dueByTime = now - lastLivePushRef.current > SYNC_LIVE_LOCATION_PUSH_MS;
+          const dueByMove = movedMeters > SYNC_LIVE_LOCATION_MOVE_M;
           if (dueByTime || dueByMove) {
             lastLivePushRef.current = now;
             lastLiveCoordsRef.current = { lat: latitude, lng: longitude };
@@ -616,6 +653,16 @@ export default function App() {
   ) => {
     const trimmedName = changes.name.trim();
     if (!trimmedName) return;
+
+    const ctx = cloudRef.current;
+    if (ctx && id === ctx.user.id) {
+      void updateOwnProfile(ctx, {
+        name: trimmedName,
+        ...(changes.avatar ? { avatar: changes.avatar } : {}),
+      }).catch((err) => {
+        setSyncError(toUserFacingError(err, 'Impossible de mettre à jour le profil.'));
+      });
+    }
 
     const current = crewCustomizationsRef.current[id] || {};
     crewCustomizationsRef.current = {

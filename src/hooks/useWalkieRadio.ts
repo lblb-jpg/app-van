@@ -28,6 +28,7 @@ type WalkieSignal =
     };
 
 const MAX_TRANSMISSION_MS = 60_000;
+const STALE_SPEAKER_MS = 4_000;
 const TARGET_SAMPLE_RATE = 16_000;
 const FRAME_SAMPLES = 2048;
 
@@ -96,6 +97,7 @@ export function useWalkieRadio(options: {
   const nextPlayTimeRef = useRef(0);
   const presenceRef = useRef(new Map<string, number>());
   const remoteCallStartedRef = useRef(new Map<string, number>());
+  const lastSpeakerActivityRef = useRef(new Map<string, number>());
   const startedAtRef = useRef(0);
   const stopTimerRef = useRef<number | undefined>(undefined);
   const elapsedTimerRef = useRef<number | undefined>(undefined);
@@ -153,27 +155,43 @@ export function useWalkieRadio(options: {
     setOnlineCount(presenceRef.current.size);
   }, []);
 
+  const playPcmBuffer = useCallback((ctx: AudioContext, samples: Float32Array, sampleRate: number) => {
+    if (!samples.length) return;
+    const buffer = ctx.createBuffer(1, samples.length, sampleRate || TARGET_SAMPLE_RATE);
+    buffer.copyToChannel(samples, 0);
+    const source = ctx.createBufferSource();
+    const gain = ctx.createGain();
+    gain.gain.value = 1.15;
+    source.buffer = buffer;
+    source.connect(gain);
+    gain.connect(ctx.destination);
+    const startAt = Math.max(ctx.currentTime + 0.02, nextPlayTimeRef.current);
+    source.start(startAt);
+    nextPlayTimeRef.current = startAt + buffer.duration;
+  }, []);
+
   const playRemotePcm = useCallback(async (pcm: string, sampleRate: number) => {
     try {
       const ctx = await ensurePlaybackContext();
-      const samples = base64ToFloat32(pcm);
-      if (!samples.length) return;
-      const buffer = ctx.createBuffer(1, samples.length, sampleRate || TARGET_SAMPLE_RATE);
-      buffer.copyToChannel(samples, 0);
-      const source = ctx.createBufferSource();
-      const gain = ctx.createGain();
-      gain.gain.value = 1.15;
-      source.buffer = buffer;
-      source.connect(gain);
-      gain.connect(ctx.destination);
-      const startAt = Math.max(ctx.currentTime + 0.02, nextPlayTimeRef.current);
-      source.start(startAt);
-      nextPlayTimeRef.current = startAt + buffer.duration;
+      playPcmBuffer(ctx, base64ToFloat32(pcm), sampleRate);
     } catch {
       setError('Touche une fois l’écran pour autoriser le haut-parleur.');
       setAudioUnlocked(false);
     }
-  }, [ensurePlaybackContext]);
+  }, [ensurePlaybackContext, playPcmBuffer]);
+
+  const clearStaleSpeaker = useCallback(() => {
+    setActiveSpeaker((speaker) => {
+      if (!speaker || speaker.id === cloudContext?.user.id) return speaker;
+      const lastActivity = lastSpeakerActivityRef.current.get(speaker.id) || 0;
+      if (Date.now() - lastActivity > STALE_SPEAKER_MS) {
+        remoteCallStartedRef.current.delete(speaker.id);
+        lastSpeakerActivityRef.current.delete(speaker.id);
+        return null;
+      }
+      return speaker;
+    });
+  }, [cloudContext]);
 
   useEffect(() => {
     if (!cloudContext) {
@@ -195,6 +213,7 @@ export function useWalkieRadio(options: {
 
       if (signal.kind === 'ptt-start') {
         remoteCallStartedRef.current.set(signal.from, signal.sentAt);
+        lastSpeakerActivityRef.current.set(signal.from, signal.sentAt);
         setActiveSpeaker({ id: signal.from, name: signal.senderName });
         nextPlayTimeRef.current = 0;
         await ensurePlaybackContext().catch(() => undefined);
@@ -204,6 +223,7 @@ export function useWalkieRadio(options: {
       if (signal.kind === 'ptt-stop') {
         const startedAt = remoteCallStartedRef.current.get(signal.from) || signal.sentAt;
         remoteCallStartedRef.current.delete(signal.from);
+        lastSpeakerActivityRef.current.delete(signal.from);
         setActiveSpeaker((speaker) => (speaker?.id === signal.from ? null : speaker));
         setCalls((items) => [{
           id: `${signal.from}-${signal.sentAt}`,
@@ -217,6 +237,7 @@ export function useWalkieRadio(options: {
 
       if (signal.kind === 'audio') {
         presenceRef.current.set(signal.from, signal.sentAt);
+        lastSpeakerActivityRef.current.set(signal.from, signal.sentAt);
         if (!remoteCallStartedRef.current.has(signal.from)) {
           remoteCallStartedRef.current.set(signal.from, signal.sentAt);
           setActiveSpeaker({ id: signal.from, name: signal.senderName });
@@ -251,6 +272,7 @@ export function useWalkieRadio(options: {
     presenceTimerRef.current = window.setInterval(() => {
       void sendSignal({ kind: 'presence' });
       refreshPresence();
+      clearStaleSpeaker();
     }, 4_000);
 
     return () => {
@@ -261,7 +283,7 @@ export function useWalkieRadio(options: {
       setChannelReady(false);
       void cloudContext.supabase.removeChannel(channel);
     };
-  }, [cloudContext, ensurePlaybackContext, playRemotePcm, refreshPresence, sendSignal]);
+  }, [cloudContext, clearStaleSpeaker, ensurePlaybackContext, playRemotePcm, refreshPresence, sendSignal]);
 
   const stopTransmission = useCallback(async () => {
     releaseRequestedRef.current = true;
@@ -290,6 +312,8 @@ export function useWalkieRadio(options: {
 
     setIsTransmitting(false);
     setElapsedMs(0);
+    setActiveSpeaker((speaker) => (speaker?.id === cloudContext?.user.id ? null : speaker));
+    lastSpeakerActivityRef.current.delete(cloudContext?.user.id || '');
     await sendSignal({ kind: 'ptt-stop' });
     setCalls((items) => [{
       id: `me-${Date.now()}`,
@@ -301,7 +325,8 @@ export function useWalkieRadio(options: {
   }, [cloudContext, sendSignal]);
 
   const startTransmission = useCallback(async () => {
-    if (transmittingRef.current || activeSpeaker || !cloudContext || !channelReady) return;
+    const someoneElseSpeaking = activeSpeaker && activeSpeaker.id !== cloudContext?.user.id;
+    if (transmittingRef.current || someoneElseSpeaking || !cloudContext || !channelReady) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       setError('Le micro n’est pas pris en charge sur ce navigateur.');
       return;
@@ -329,12 +354,18 @@ export function useWalkieRadio(options: {
       const processor = captureCtx.createScriptProcessor(FRAME_SAMPLES, 1, 1);
       const mute = captureCtx.createGain();
       mute.gain.value = 0;
+      const playbackCtx = await ensurePlaybackContext();
 
       processor.onaudioprocess = (event) => {
         if (!transmittingRef.current) return;
         const input = event.inputBuffer.getChannelData(0);
         const downsampled = downsample(input, captureCtx.sampleRate, TARGET_SAMPLE_RATE);
         const pcm = floatToInt16Base64(downsampled);
+        try {
+          playPcmBuffer(playbackCtx, downsampled, TARGET_SAMPLE_RATE);
+        } catch {
+          // sidetone optional if playback context suspended
+        }
         void sendSignal({
           kind: 'audio',
           sampleRate: TARGET_SAMPLE_RATE,
@@ -354,6 +385,9 @@ export function useWalkieRadio(options: {
       transmittingRef.current = true;
       setIsTransmitting(true);
       setElapsedMs(0);
+      setActiveSpeaker({ id: cloudContext.user.id, name: senderNameRef.current });
+      lastSpeakerActivityRef.current.set(cloudContext.user.id, Date.now());
+      nextPlayTimeRef.current = 0;
       await sendSignal({ kind: 'ptt-start' });
       elapsedTimerRef.current = window.setInterval(
         () => setElapsedMs(Date.now() - startedAtRef.current),
@@ -372,6 +406,7 @@ export function useWalkieRadio(options: {
     channelReady,
     cloudContext,
     ensurePlaybackContext,
+    playPcmBuffer,
     sendSignal,
     stopTransmission,
   ]);
@@ -404,7 +439,9 @@ export function useWalkieRadio(options: {
     audioUnlocked,
     friends,
     currentFriend,
-    disabled: !cloudContext || !channelReady || Boolean(activeSpeaker),
+    disabled: !cloudContext || !channelReady || Boolean(
+      activeSpeaker && activeSpeaker.id !== cloudContext.user.id
+    ),
     unlockAudio,
     startTransmission,
     stopTransmission,

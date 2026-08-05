@@ -1106,6 +1106,10 @@ export function subscribeTripRealtime(
     .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'gps_tracks', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_members', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'trips', filter: `id=eq.${ctx.tripId}` }, normalized.onDataChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'expense_splits' }, normalized.onDataChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'gps_track_points' }, normalized.onDataChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, normalized.onDataChange)
     .on(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'member_locations', filter: `trip_id=eq.${ctx.tripId}` },

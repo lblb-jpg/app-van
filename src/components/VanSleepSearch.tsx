@@ -4,6 +4,7 @@ import {
   Check,
   ChevronDown,
   Clock3,
+  Crosshair,
   Droplets,
   ExternalLink,
   Info,
@@ -17,6 +18,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type { FrancePlace, VanSleepSearchResult, VanSleepSpot } from '../types';
+import { geolocationErrorMessage, isGeolocationAvailable } from '../services/geolocation';
 import { searchVanSleepSpots, suggestFrenchPlaces } from '../services/vanSpots';
 
 interface VanSleepSearchProps {
@@ -24,7 +26,7 @@ interface VanSleepSearchProps {
   onSaveSpot: (spot: VanSleepSpot) => void;
 }
 
-type Filter = 'all' | 'recommended' | 'free' | 'water';
+type Filter = 'recommended' | 'aires' | 'campings' | 'parkings' | 'free' | 'water' | 'all';
 const RECENT_KEY = 'vanlife_sleep_searches_v1';
 const normalizeQuery = (value: string) => value.trim().toLocaleLowerCase('fr');
 
@@ -45,20 +47,21 @@ function detailValue(value?: string) {
 }
 
 function getSpotEmoji(spot: VanSleepSpot) {
-  const description = `${spot.label} ${spot.name}`.toLowerCase();
-  if (description.includes('camping')) return '⛺';
-  if (description.includes('parking')) return '🅿️';
-  if (description.includes('aire')) return '🚐';
+  if (spot.type === 'camp_site') return '⛺';
+  if (spot.type === 'van_parking' || spot.type === 'parking') return '🅿️';
+  if (spot.type === 'motorhome_stopover' || spot.type === 'caravan_site') return '🚐';
   return '📍';
 }
 
+
 export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, onSaveSpot }) => {
   const [query, setQuery] = useState('');
-  const [radiusKm, setRadiusKm] = useState(20);
+  const [radiusKm, setRadiusKm] = useState(25);
   const [result, setResult] = useState<VanSleepSearchResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [locating, setLocating] = useState(false);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<Filter>('all');
+  const [filter, setFilter] = useState<Filter>('recommended');
   const [visibleCount, setVisibleCount] = useState(12);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [savedIds, setSavedIds] = useState<string[]>([]);
@@ -128,13 +131,16 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
     setVisibleCount(12);
     setExpandedId(null);
     setShowSuggestions(false);
+    setFilter('recommended');
     try {
       const data = await searchVanSleepSpots(trimmed, radiusKm, place, controller.signal);
       setResult(data);
       setQuery(trimmed);
-      const nextRecent = [trimmed, ...recentSearches.filter((item) => item.toLowerCase() !== trimmed.toLowerCase())].slice(0, 5);
-      setRecentSearches(nextRecent);
-      localStorage.setItem(RECENT_KEY, JSON.stringify(nextRecent));
+      if (!place?.label?.toLowerCase().includes('autour de moi')) {
+        const nextRecent = [trimmed, ...recentSearches.filter((item) => item.toLowerCase() !== trimmed.toLowerCase())].slice(0, 5);
+        setRecentSearches(nextRecent);
+        localStorage.setItem(RECENT_KEY, JSON.stringify(nextRecent));
+      }
     } catch (searchError) {
       if ((searchError as DOMException)?.name !== 'AbortError') {
         setError(searchError instanceof Error ? searchError.message : 'Recherche indisponible.');
@@ -144,17 +150,65 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
     }
   };
 
+  const searchNearMe = () => {
+    if (!isGeolocationAvailable()) {
+      setError('La géolocalisation n’est pas disponible sur cet appareil.');
+      return;
+    }
+    setLocating(true);
+    setError('');
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocating(false);
+        const place: FrancePlace = {
+          id: 'gps',
+          name: 'Autour de moi',
+          label: 'Autour de moi · ma position',
+          postalCode: '',
+          department: '',
+          region: '',
+          population: 0,
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        };
+        setQuery('Autour de moi');
+        void runSearch('Autour de moi', place);
+      },
+      (geoError) => {
+        setLocating(false);
+        setError(geolocationErrorMessage(geoError));
+      },
+      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 60_000 }
+    );
+  };
+
   const filteredSpots = useMemo(() => {
     const spots = result?.spots || [];
     if (filter === 'recommended') return spots.filter((spot) => spot.confidence !== 'verify');
-    if (filter === 'free') return spots.filter((spot) => spot.fee === 'no' || spot.feeAmount === '0');
+    if (filter === 'aires') {
+      return spots.filter((spot) => spot.type === 'motorhome_stopover' || spot.type === 'caravan_site');
+    }
+    if (filter === 'campings') return spots.filter((spot) => spot.type === 'camp_site');
+    if (filter === 'parkings') {
+      return spots.filter((spot) => spot.type === 'van_parking' || spot.type === 'parking');
+    }
+    if (filter === 'free') {
+      return spots.filter(
+        (spot) => spot.fee === 'no' || spot.feeAmount === '0' || spot.amenities?.includes('Gratuit')
+      );
+    }
     if (filter === 'water') return spots.filter((spot) => (spot.amenities || []).includes('Eau potable'));
     return spots;
   }, [result, filter]);
 
+  const officialCount = useMemo(
+    () => (result?.spots || []).filter((spot) => spot.confidence === 'official').length,
+    [result]
+  );
+
   const saveSpot = (spot: VanSleepSpot) => {
     onSaveSpot(spot);
-    setSavedIds((items) => items.includes(spot.id) ? items : [...items, spot.id]);
+    setSavedIds((items) => (items.includes(spot.id) ? items : [...items, spot.id]));
   };
 
   return (
@@ -168,13 +222,13 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-[8px] font-extrabold uppercase tracking-[.16em] text-[#ff9a62] sm:text-[9px] sm:tracking-[.18em]">
-                Moteur de spots van
+                Aires · campings · parkings van
               </p>
               <h2 className="mt-0.5 text-[1.35rem] font-extrabold leading-tight tracking-tight sm:mt-1 sm:text-2xl">
                 Où dormir ce soir&nbsp;?
               </h2>
-              <p className="mt-1 max-w-[34ch] text-[10px] font-semibold leading-relaxed text-white/50 sm:max-w-none sm:text-[11px]">
-                Entre seulement une ville&nbsp;: on cherche jusqu’à 80 lieux autour.
+              <p className="mt-1 max-w-[36ch] text-[10px] font-semibold leading-relaxed text-white/50 sm:max-w-none sm:text-[11px]">
+                Uniquement des lieux recensés pour le van — pas les aires de pique-nique ni les parkings au hasard.
               </p>
             </div>
           </div>
@@ -200,8 +254,18 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
               />
             </label>
             <button
+              type="button"
+              disabled={loading || locating}
+              onClick={searchNearMe}
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-[0.95rem] bg-[#f0ece2] text-[#17352b] transition-all hover:bg-[#e6e0d2] disabled:opacity-60 sm:rounded-[1rem]"
+              aria-label="Chercher autour de moi"
+              title="Autour de moi"
+            >
+              {locating ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <Crosshair className="h-5 w-5" />}
+            </button>
+            <button
               type="submit"
-              disabled={loading}
+              disabled={loading || locating}
               className="grid h-11 w-11 shrink-0 place-items-center rounded-[0.95rem] bg-[#eb6c32] text-white shadow-md transition-all hover:bg-[#d95d29] disabled:opacity-60 sm:rounded-[1rem]"
               aria-label="Rechercher des spots"
             >
@@ -278,8 +342,8 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                 className="border-0 bg-transparent text-[10px] font-extrabold text-white outline-none sm:text-[9px]"
               >
                 <option value={10}>10 km</option>
-                <option value={20}>20 km</option>
-                <option value={30}>30 km</option>
+                <option value={15}>15 km</option>
+                <option value={25}>25 km</option>
                 <option value={40}>40 km</option>
               </select>
             </label>
@@ -296,8 +360,10 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
       {loading && (
         <div className="rounded-[2rem] border border-[#17352b]/10 bg-white/75 p-8 text-center shadow-sm">
           <LoaderCircle className="mx-auto h-7 w-7 animate-spin text-[#eb6c32]" />
-          <h3 className="mt-3 text-sm font-extrabold text-[#17352b]">Exploration des alentours…</h3>
-          <p className="mt-1 text-[10px] font-semibold text-zinc-500">Campings, aires, haltes et parkings sont analysés.</p>
+          <h3 className="mt-3 text-sm font-extrabold text-[#17352b]">Recherche des aires van…</h3>
+          <p className="mt-1 text-[10px] font-semibold text-zinc-500">
+            Aires camping-car, campings et parkings nuit recensés.
+          </p>
         </div>
       )}
 
@@ -307,24 +373,32 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[9px] font-extrabold uppercase tracking-[.14em] text-[#eb6c32]">Zone trouvée</p>
-                <h3 className="mt-1 truncate text-base font-extrabold text-[#17352b]">{result.place?.name || result.query}</h3>
+                <h3 className="mt-1 truncate text-base font-extrabold text-[#17352b]">
+                  {result.place?.name || result.query}
+                </h3>
                 <p className="mt-1 text-[10px] font-semibold text-zinc-500">
-                  {result.count} lieu(x) dans un rayon de {result.radiusKm} km
+                  {filteredSpots.length} affiché{filteredSpots.length > 1 ? 's' : ''} · {result.count} trouvé
+                  {result.count > 1 ? 's' : ''} dans {result.radiusKm} km
                 </p>
               </div>
               <span className="shrink-0 rounded-2xl bg-emerald-50 px-3 py-2 text-center text-emerald-800 ring-1 ring-emerald-200">
-                <strong className="block text-lg font-black">{(result.spots || []).filter((spot) => spot.confidence === 'official').length}</strong>
+                <strong className="block text-lg font-black">{officialCount}</strong>
                 <small className="text-[8px] font-extrabold uppercase">officiels</small>
               </span>
             </div>
 
             <div className="mt-4 flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-              {([
-                ['all', `Tous (${result.count})`],
-                ['recommended', 'Recommandés'],
-                ['free', 'Gratuits'],
-                ['water', 'Avec eau'],
-              ] as [Filter, string][]).map(([id, label]) => (
+              {(
+                [
+                  ['recommended', 'Pour dormir'],
+                  ['aires', 'Aires'],
+                  ['campings', 'Campings'],
+                  ['parkings', 'Parkings'],
+                  ['free', 'Gratuits'],
+                  ['water', 'Eau'],
+                  ['all', `Tous (${result.count})`],
+                ] as [Filter, string][]
+              ).map(([id, label]) => (
                 <button
                   key={id}
                   type="button"
@@ -372,7 +446,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                                 ? 'bg-orange-50 text-orange-700 ring-1 ring-orange-200'
                                 : 'bg-zinc-100 text-zinc-500'
                           }`}>
-                            {official ? 'Officiel' : likely ? 'Probable' : 'À vérifier'}
+                            {official ? 'Officiel' : likely ? 'Parking van' : 'À vérifier'}
                           </span>
                         </div>
 
@@ -452,7 +526,20 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
             {filteredSpots.length === 0 && (
               <div className="rounded-[2rem] border border-dashed border-zinc-300 bg-white/60 p-8 text-center">
                 <BedDouble className="mx-auto h-6 w-6 text-zinc-300" />
-                <p className="mt-2 text-xs font-bold text-zinc-500">Aucun lieu ne correspond à ce filtre.</p>
+                <p className="mt-2 text-xs font-bold text-zinc-500">
+                  {result.count === 0
+                    ? 'Aucun spot van trouvé ici. Essaie d’élargir le rayon.'
+                    : 'Aucun lieu ne correspond à ce filtre.'}
+                </p>
+                {result.count > 0 && filter !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => setFilter('all')}
+                    className="mt-3 text-[10px] font-extrabold text-[#eb6c32]"
+                  >
+                    Voir tous les résultats
+                  </button>
+                )}
               </div>
             )}
 
