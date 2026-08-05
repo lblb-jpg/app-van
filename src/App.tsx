@@ -249,9 +249,7 @@ export default function App() {
 
       const schemaIssues = await verifyCloudSchema(ctx);
       if (schemaIssues.length) {
-        setSyncError(
-          `Sync partielle (${schemaIssues.join(', ')}). Les données sont chargées — exécute supabase/ensure_full_sync.sql pour le VanPay complet.`
-        );
+        console.warn('Schéma Supabase incomplet (VanPay):', schemaIssues.join(', '));
       }
 
       const local = {
