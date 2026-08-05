@@ -1334,5 +1334,21 @@ export async function verifyCloudSchema(ctx: CloudContext): Promise<string[]> {
     issues.push('Bucket Storage trip-photos manquant');
   }
 
+  const { error: expenseSplitError } = await ctx.supabase
+    .from('expense_splits')
+    .select('share_count, split_amount')
+    .limit(1);
+  if (expenseSplitError && /share_count|split_amount/i.test(expenseSplitError.message || '')) {
+    issues.push('Colonnes expense_splits.share_count / split_amount manquantes');
+  }
+
+  const { error: expenseMetaError } = await ctx.supabase
+    .from('expenses')
+    .select('split_type, currency, notes')
+    .limit(1);
+  if (expenseMetaError && /split_type|currency|notes/i.test(expenseMetaError.message || '')) {
+    issues.push('Colonnes expenses.split_type / currency / notes manquantes');
+  }
+
   return issues;
 }

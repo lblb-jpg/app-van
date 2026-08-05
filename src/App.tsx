@@ -251,9 +251,11 @@ export default function App() {
       };
       const schemaIssues = await verifyCloudSchema(ctx);
       if (schemaIssues.length) {
-        setSyncError(
-          `Schéma Supabase incomplet (${schemaIssues.join(', ')}). Exécute supabase/ensure_full_sync.sql dans le SQL Editor.`
-        );
+        const schemaMessage = `Schéma Supabase incomplet (${schemaIssues.join(', ')}). Exécute supabase/ensure_full_sync.sql dans le SQL Editor Supabase.`;
+        setSyncError(schemaMessage);
+        cloudRef.current = null;
+        setCloudReady(false);
+        return false;
       }
 
       let bundle = await syncLocalDataToCloud(ctx, local);
@@ -825,7 +827,7 @@ export default function App() {
             : 'van-main-inset overflow-y-auto'
         }`}
       >
-        <div className={activeTab === 'map' ? 'h-full' : 'hidden'} aria-hidden={activeTab !== 'map'}>
+        <div className={activeTab === 'map' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'} aria-hidden={activeTab !== 'map'}>
           <MapView
             pois={pois}
             friends={friends}

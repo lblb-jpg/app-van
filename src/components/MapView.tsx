@@ -601,7 +601,7 @@ export const MapView: React.FC<MapViewProps> = ({
     journal.filter((n) => n.lat && n.lng).length;
 
   return (
-    <div className="map-view">
+    <div className="map-view flex min-h-0 flex-1 flex-col">
       <div ref={mapContainerRef} className="map-view__canvas" />
 
       {/* Compact floating toolbar */}
