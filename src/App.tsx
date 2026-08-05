@@ -59,7 +59,8 @@ import { toUserFacingError } from './lib/userFacingError';
 import {
   CREW_MEMBER_NAMES,
   ensureCrewAccounts,
-  isCrewAccount,
+  ensureCrewSession,
+  resolvePreferredCrewName,
   switchToCrewMember,
 } from './services/supabase';
 
@@ -231,6 +232,8 @@ export default function App() {
     }
 
     try {
+      await ensureCrewSession(resolvePreferredCrewName());
+
       let ctx = await bootstrapCloud();
       if (!ctx) {
         cloudRef.current = null;
@@ -241,6 +244,16 @@ export default function App() {
 
       cloudRef.current = ctx;
       setActiveTripIdState(ctx.tripId);
+
+      let bundle = await loadTripBundle(ctx);
+
+      const schemaIssues = await verifyCloudSchema(ctx);
+      if (schemaIssues.length) {
+        setSyncError(
+          `Sync partielle (${schemaIssues.join(', ')}). Les données sont chargées — exécute supabase/ensure_full_sync.sql pour le VanPay complet.`
+        );
+      }
+
       const local = {
         pois: await dbService.getPois(),
         waypoints: await dbService.getWaypoints(),
@@ -249,16 +262,13 @@ export default function App() {
         expenses: await dbService.getExpenses(),
         tracks: await dbService.getTracks(),
       };
-      const schemaIssues = await verifyCloudSchema(ctx);
-      if (schemaIssues.length) {
-        const schemaMessage = `Schéma Supabase incomplet (${schemaIssues.join(', ')}). Exécute supabase/ensure_full_sync.sql dans le SQL Editor Supabase.`;
-        setSyncError(schemaMessage);
-        cloudRef.current = null;
-        setCloudReady(false);
-        return false;
+
+      try {
+        bundle = await syncLocalDataToCloud(ctx, local);
+      } catch (pushErr) {
+        console.warn('Push local → cloud failed', pushErr);
       }
 
-      let bundle = await syncLocalDataToCloud(ctx, local);
       const existingCrewNames = new Set(
         bundle.friends.map((friend) => friend.name.trim().toLowerCase())
       );
@@ -267,20 +277,13 @@ export default function App() {
       );
 
       if (!crewIsComplete) {
-        const inviteCode = await getTripInviteCode(ctx);
-        await ensureCrewAccounts(inviteCode);
-        bundle = await loadTripBundle(ctx);
-      }
-
-      if (!isCrewAccount(ctx.user)) {
-        await switchToCrewMember('Adel');
-        const crewContext = await bootstrapCloud();
-        if (!crewContext) throw new Error('Impossible d’ouvrir le profil Adel.');
-        ctx = crewContext;
-        cloudRef.current = ctx;
-        setActiveTripIdState(ctx.tripId);
-        currentFriendIdRef.current = ctx.user.id;
-        bundle = await loadTripBundle(ctx);
+        try {
+          const inviteCode = await getTripInviteCode(ctx);
+          await ensureCrewAccounts(inviteCode);
+          bundle = await loadTripBundle(ctx);
+        } catch (crewErr) {
+          console.warn('Crew bootstrap failed', crewErr);
+        }
       }
 
       await applyBundle(bundle, ctx.user.id);
@@ -288,6 +291,7 @@ export default function App() {
       setIsAuthModalOpen(false);
       return true;
     } catch (err: any) {
+      console.error('Cloud sync failed', err);
       setSyncError(toUserFacingError(err, 'Synchronisation indisponible.'));
       cloudRef.current = null;
       setCloudReady(false);

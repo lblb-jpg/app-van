@@ -218,6 +218,40 @@ function trackFingerprint(track: Pick<GpsTrack, 'title' | 'date' | 'distanceKm'>
   return `${track.title.trim().toLowerCase()}|${toIsoDate(track.date)}|${Number(track.distanceKm).toFixed(2)}`;
 }
 
+async function fetchTripExpenses(ctx: CloudContext) {
+  const query = () =>
+    ctx.supabase
+      .from('expenses')
+      .select('*')
+      .eq('trip_id', ctx.tripId)
+      .order('spent_on', { ascending: false });
+
+  let res = await ctx.supabase
+    .from('expenses')
+    .select('*, expense_splits(user_id, share_count, split_amount)')
+    .eq('trip_id', ctx.tripId)
+    .order('spent_on', { ascending: false });
+
+  if (!res.error) return res;
+
+  const message = res.error.message || '';
+  if (/share_count|split_amount/i.test(message)) {
+    res = await ctx.supabase
+      .from('expenses')
+      .select('*, expense_splits(user_id)')
+      .eq('trip_id', ctx.tripId)
+      .order('spent_on', { ascending: false });
+    if (!res.error) return res;
+  }
+
+  if (/expense_splits|split_type|currency|notes/i.test(message) || res.error) {
+    res = await query();
+    if (!res.error) return res;
+  }
+
+  throw res.error ?? new Error('Impossible de charger les dépenses.');
+}
+
 export async function bootstrapCloud(): Promise<CloudContext | null> {
   const { supabase, user, error } = await ensureSupabaseSession();
   if (!supabase || !user) {
@@ -357,17 +391,14 @@ export async function loadTripBundle(ctx: CloudContext) {
     supabase.from('waypoints').select('*').eq('trip_id', tripId).order('position', { ascending: true }),
     supabase.from('journal_notes').select('*').eq('trip_id', tripId).order('happened_on', { ascending: false }),
     supabase.from('photos').select('*').eq('trip_id', tripId).order('taken_on', { ascending: false }),
-    supabase
-      .from('expenses')
-      .select('*, expense_splits(user_id, share_count, split_amount)')
-      .eq('trip_id', tripId)
-      .order('spent_on', { ascending: false }),
+    fetchTripExpenses(ctx),
     supabase.from('gps_tracks').select('*').eq('trip_id', tripId).order('tracked_on', { ascending: false }),
   ]);
 
-  for (const res of [membersRes, locationsRes, poisRes, waypointsRes, journalRes, photosRes, expensesRes, tracksRes]) {
+  for (const res of [membersRes, locationsRes, poisRes, waypointsRes, journalRes, photosRes, tracksRes]) {
     if (res.error) throw res.error;
   }
+  if (expensesRes.error) throw expensesRes.error;
 
   const locationsByUser = new Map(
     (locationsRes.data ?? []).map((row) => [

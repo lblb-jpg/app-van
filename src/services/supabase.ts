@@ -108,10 +108,38 @@ export async function ensureSupabaseSession(): Promise<{
   const { data: existing, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) return { supabase, user: null, error: sessionError, needsAuth: true };
   if (existing.session?.user) {
-    return { supabase, user: existing.session.user, error: null, needsAuth: false };
+    if (isCrewAccount(existing.session.user)) {
+      return { supabase, user: existing.session.user, error: null, needsAuth: false };
+    }
+    // Replace anonymous / legacy sessions with a crew password session.
+    try {
+      const user = await switchToCrewMember(resolvePreferredCrewName());
+      return { supabase, user, error: null, needsAuth: false };
+    } catch (err: any) {
+      return {
+        supabase,
+        user: null,
+        error: err instanceof Error ? err : new Error(String(err)),
+        needsAuth: true,
+      };
+    }
   }
 
   const savedName = getStoredDisplayName();
+  if (isCrewMemberName(savedName)) {
+    try {
+      const user = await switchToCrewMember(savedName);
+      return { supabase, user, error: null, needsAuth: false };
+    } catch (err: any) {
+      return {
+        supabase,
+        user: null,
+        error: err instanceof Error ? err : new Error(String(err)),
+        needsAuth: true,
+      };
+    }
+  }
+
   if (savedName) {
     try {
       const user = await signInWithDisplayName(savedName);
@@ -138,6 +166,10 @@ export async function signInWithDisplayName(name: string) {
   if (!supabase) throw new Error('Supabase non configuré');
 
   saveDisplayName(trimmed);
+
+  if (isCrewMemberName(trimmed)) {
+    return switchToCrewMember(trimmed);
+  }
 
   // Reuse existing session when possible.
   {
@@ -183,6 +215,16 @@ export async function signInWithDisplayName(name: string) {
   throw new Error('Connexion impossible pour le moment. Réessaie dans un instant.');
 }
 
+export function resolvePreferredCrewName(): CrewMemberName {
+  const savedName = getStoredDisplayName();
+  return isCrewMemberName(savedName) ? savedName : 'Adel';
+}
+
+/** Connect with the fixed crew email/password accounts (primary auth path). */
+export async function ensureCrewSession(name: CrewMemberName = resolvePreferredCrewName()) {
+  return switchToCrewMember(name);
+}
+
 async function signInOrCreateCrewAccount(supabase: SupabaseClient, name: CrewMemberName) {
   const { email, password } = credentialsFromDisplayName(name);
   const signedIn = await supabase.auth.signInWithPassword({ email, password });
@@ -196,13 +238,27 @@ async function signInOrCreateCrewAccount(supabase: SupabaseClient, name: CrewMem
     password,
     options: { data: { name } },
   });
-  if (signedUp.error) throw signedUp.error;
-  if (!signedUp.data.session?.user) {
-    throw new Error(`Le compte ${name} doit être confirmé dans Supabase avant de continuer.`);
+  if (signedUp.error) {
+    const retry = await supabase.auth.signInWithPassword({ email, password });
+    if (!retry.error && retry.data.user) {
+      await upsertProfileName(supabase, retry.data.user.id, name);
+      return retry.data.user;
+    }
+    throw signedUp.error;
   }
 
-  await upsertProfileName(supabase, signedUp.data.session.user.id, name);
-  return signedUp.data.session.user;
+  if (signedUp.data.session?.user) {
+    await upsertProfileName(supabase, signedUp.data.session.user.id, name);
+    return signedUp.data.session.user;
+  }
+
+  const retry = await supabase.auth.signInWithPassword({ email, password });
+  if (!retry.error && retry.data.user) {
+    await upsertProfileName(supabase, retry.data.user.id, name);
+    return retry.data.user;
+  }
+
+  throw new Error(`Connexion ${name} impossible. Vérifie que l’email est autorisé dans Supabase.`);
 }
 
 /** Switches the active Supabase session to one of the three fixed crew accounts. */
@@ -231,16 +287,28 @@ export async function ensureCrewAccounts(inviteCode: string) {
   const config = getStoredSupabaseConfig();
   if (!config) throw new Error('Supabase non configuré');
 
+  const failures: string[] = [];
   for (const name of CREW_MEMBER_NAMES) {
-    const isolated = createClient(config.url, config.anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    });
-    await signInOrCreateCrewAccount(isolated, name);
-    const { error } = await isolated.rpc('join_trip_by_code', {
-      invite: inviteCode.trim().toUpperCase(),
-    });
-    if (error) throw error;
-    await isolated.auth.signOut();
+    try {
+      const isolated = createClient(config.url, config.anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      });
+      await signInOrCreateCrewAccount(isolated, name);
+      const { error } = await isolated.rpc('join_trip_by_code', {
+        invite: inviteCode.trim().toUpperCase(),
+      });
+      if (error) failures.push(`${name}: ${error.message}`);
+      await isolated.auth.signOut();
+    } catch (err: any) {
+      failures.push(`${name}: ${err?.message || err}`);
+    }
+  }
+
+  if (failures.length === CREW_MEMBER_NAMES.length) {
+    throw new Error(failures[0] || 'Impossible de préparer les comptes équipage.');
+  }
+  if (failures.length) {
+    console.warn('ensureCrewAccounts partial:', failures);
   }
 }
 

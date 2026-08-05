@@ -25,6 +25,12 @@ export function toUserFacingError(error: unknown, fallback = 'Action impossible 
   if (message.includes('supabase non configuré')) {
     return 'Cloud non configuré. Mode local actif.';
   }
+  if (message.includes('schéma supabase incomplet') || message.includes('sync partielle')) {
+    return raw;
+  }
+  if (message.includes('share_count') || message.includes('split_amount') || message.includes('split_type')) {
+    return 'Base Supabase à mettre à jour. Exécute supabase/ensure_full_sync.sql puis recharge l’app.';
+  }
   if (message.includes('indique un prénom') || message.includes('prénom')) {
     return 'Indique un prénom pour continuer.';
   }
