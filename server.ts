@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 
@@ -22,10 +21,17 @@ app.use((req, _res, next) => {
     pathOnly.startsWith("/van-spots") ||
     pathOnly.startsWith("/france-places") ||
     pathOnly.startsWith("/auth") ||
-    pathOnly === "/health"
+    pathOnly === "/health" ||
+    pathOnly.startsWith("/supabase")
   ) {
     req.url = `/api${url.startsWith("/") ? url : `/${url}`}`;
   }
+  next();
+});
+
+// Avoid caching API responses on mobile / PWA.
+app.use("/api", (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
   next();
 });
 
@@ -278,6 +284,8 @@ out center tags 120;`;
     const overpassEndpoints = [
       "https://overpass-api.de/api/interpreter",
       "https://overpass.kumi.systems/api/interpreter",
+      "https://overpass.private.coffee/api/interpreter",
+      "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     ];
     for (const endpoint of overpassEndpoints) {
       try {
@@ -382,7 +390,9 @@ out center tags 120;`;
 });
 
 async function main() {
+  // Dynamic import keeps `vite` out of the Vercel serverless bundle.
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -397,6 +407,11 @@ async function main() {
     });
   }
 
+  // JSON 404 for unmatched API routes (avoids HTML "Cannot GET /api/...").
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ error: "Route API introuvable." });
+  });
+
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`VanLife GPS App active sur http://0.0.0.0:${PORT}`);
   });
@@ -404,6 +419,11 @@ async function main() {
 
 if (!process.env.VERCEL) {
   void main();
+} else {
+  // Same JSON 404 when running as a Vercel serverless function.
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ error: "Route API introuvable." });
+  });
 }
 
 export default app;

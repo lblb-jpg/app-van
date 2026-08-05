@@ -934,7 +934,7 @@ export default function App() {
 
   return (
     <div className={`app-shell flex flex-col text-zinc-900 ${
-      activeTab === 'radio' ? 'h-dvh overflow-hidden' : 'min-h-full'
+      activeTab === 'radio' ? 'h-dvh max-h-dvh overflow-hidden' : 'min-h-dvh'
     }`}>
       <Navigation
         activeTab={activeTab}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Map,
   Navigation as GpsIcon,
@@ -354,49 +355,53 @@ export const Navigation: React.FC<NavigationProps> = ({
         </div>
       )}
 
-      <nav className="van-bottom-nav fixed inset-x-0 bottom-0 z-40 pointer-events-none">
-        <div className="flex w-full items-stretch justify-around gap-0.5 px-1 py-2 pb-[max(0.35rem,env(safe-area-inset-bottom))] pointer-events-auto sm:gap-1 sm:px-2 sm:pb-[max(0.45rem,env(safe-area-inset-bottom))]">
-          {navItems.map((item) => {
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setActiveTab(item.id)}
-                aria-current={isActive ? 'page' : undefined}
-                className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-2 sm:rounded-[1.1rem]"
-              >
-                {isActive && (
-                  <motion.span
-                    layoutId="van-nav-bubble"
-                    className="absolute inset-0 rounded-xl bg-[#17352b] shadow-[0_6px_16px_rgba(23,53,43,.2)] sm:rounded-[1.1rem]"
-                    transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.6 }}
-                  />
-                )}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <nav className="van-bottom-nav pointer-events-none" aria-label="Navigation principale">
+            <div className="flex w-full items-stretch justify-around gap-0.5 px-1 py-2 pb-[max(0.35rem,env(safe-area-inset-bottom))] pointer-events-auto sm:gap-1 sm:px-2 sm:pb-[max(0.45rem,env(safe-area-inset-bottom))]">
+              {navItems.map((item) => {
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setActiveTab(item.id)}
+                    aria-current={isActive ? 'page' : undefined}
+                    className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-2 sm:rounded-[1.1rem]"
+                  >
+                    {isActive && (
+                      <motion.span
+                        layoutId="van-nav-bubble"
+                        className="absolute inset-0 rounded-xl bg-[#17352b] shadow-[0_6px_16px_rgba(23,53,43,.2)] sm:rounded-[1.1rem]"
+                        transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.6 }}
+                      />
+                    )}
 
-                <span className="relative z-10 flex h-5 w-5 items-center justify-center sm:h-6 sm:w-6">
-                  {React.cloneElement(item.icon as React.ReactElement<{ className?: string }>, {
-                    className: `w-4 h-4 sm:w-[17px] sm:h-[17px] transition-colors duration-200 ${
-                      isActive ? 'text-[#ff9a62]' : 'text-[#7d857d]'
-                    }`,
-                  })}
-                  {item.badge && (
-                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white animate-pulse" />
-                  )}
-                </span>
+                    <span className="relative z-10 flex h-5 w-5 items-center justify-center sm:h-6 sm:w-6">
+                      {React.cloneElement(item.icon as React.ReactElement<{ className?: string }>, {
+                        className: `w-4 h-4 sm:w-[17px] sm:h-[17px] transition-colors duration-200 ${
+                          isActive ? 'text-[#ff9a62]' : 'text-[#7d857d]'
+                        }`,
+                      })}
+                      {item.badge && (
+                        <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white animate-pulse" />
+                      )}
+                    </span>
 
-                <span
-                  className={`relative z-10 max-w-full truncate px-0.5 text-[8px] leading-none tracking-tight sm:text-[9px] ${
-                    isActive ? 'font-bold text-white' : 'font-semibold text-[#737d74]'
-                  }`}
-                >
-                  {item.label}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </nav>
+                    <span
+                      className={`relative z-10 max-w-full truncate px-0.5 text-[8px] leading-none tracking-tight sm:text-[9px] ${
+                        isActive ? 'font-bold text-white' : 'font-semibold text-[#737d74]'
+                      }`}
+                    >
+                      {item.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </nav>,
+          document.body
+        )}
     </>
   );
 };
