@@ -1,8 +1,29 @@
+# Dependencies
 node_modules/
+
+# Build
 build/
 dist/
-coverage/
-.DS_Store
-*.log
-.env*
+server.js
+*.tsbuildinfo
+
+# Env & secrets — never commit real keys
+.env
+.env.*
 !.env.example
+
+# Logs & OS
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# IDE / tooling
+.vscode/
+.idea/
+*.swp
+.vercel/
+supabase/.temp/
+
+# Local / AI Studio leftovers
+assets/.aistudio/

@@ -141,7 +141,7 @@ export const Navigation: React.FC<NavigationProps> = ({
 
   return (
     <>
-      <header className="van-header sticky top-0 z-40 w-full px-3 pt-2 sm:px-6 sm:pt-3">
+      <header className="van-header fixed inset-x-0 top-0 z-40 w-full px-3 pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-6 sm:pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="van-header__inner mx-auto flex max-w-6xl items-center justify-between rounded-[1.35rem] px-3 py-2 sm:rounded-[1.6rem] sm:px-4 sm:py-2.5">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="van-brand-mark relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[1rem] text-white sm:h-11 sm:w-11 sm:rounded-[1.1rem]">
@@ -164,7 +164,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   </span>
                 )}
               </div>
-              <p className="mt-1 flex items-center gap-1.5 text-[10px] font-bold tracking-wide text-[#6f786f] min-w-0">
+              <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] font-bold tracking-wide text-[#6f786f] min-w-0">
                 {booting ? (
                   <span className="flex items-center gap-1 text-[#6f786f]">
                     <LoaderCircle className="h-3 w-3 animate-spin" /> Connexion…
@@ -182,7 +182,9 @@ export const Navigation: React.FC<NavigationProps> = ({
                     <AlertTriangle className="h-3 w-3" /> GPS off
                   </span>
                 ) : null}
-                <span className="text-[#c5cbc4]">·</span>
+                {(booting || hasUserLocation || status.state === 'locating' || status.state === 'error') && (
+                  <span className="text-[#c5cbc4]">·</span>
+                )}
                 {isOnline ? (
                   <span className="flex items-center gap-1 text-[#36866b]">
                     <Wifi className="h-3 w-3" /> En ligne
@@ -201,7 +203,7 @@ export const Navigation: React.FC<NavigationProps> = ({
               <button
                 type="button"
                 onClick={() => void handleInstallPwa()}
-                className="p-2 rounded-xl bg-[#17352b] text-white"
+                className="flex min-h-11 min-w-11 items-center justify-center rounded-xl bg-[#17352b] text-white"
                 title="Installer sur l’écran d’accueil"
                 aria-label="Installer l’application"
               >
@@ -226,7 +228,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                 disabled={!hasFriends}
                 aria-label="Changer d’utilisateur"
                 title="Changer d’utilisateur"
-                className="bg-transparent text-xs font-bold text-zinc-800 focus:outline-hidden pl-1.5 pr-5 max-w-24 sm:max-w-32 cursor-pointer appearance-none"
+                className="bg-transparent text-xs font-bold text-zinc-800 focus:outline-hidden pl-1.5 pr-5 max-w-20 sm:max-w-32 cursor-pointer appearance-none"
               >
                 {!hasFriends && <option value={currentFriendId}>…</option>}
                 {friends.map((f) => (
@@ -239,10 +241,14 @@ export const Navigation: React.FC<NavigationProps> = ({
           </div>
         </div>
       </header>
+      <div
+        aria-hidden="true"
+        className="shrink-0 w-full h-[calc(4.35rem+env(safe-area-inset-top))] sm:h-[calc(4.85rem+env(safe-area-inset-top))]"
+      />
 
       {showInstallHint && !standalone && (
         <div className="mx-3 mt-2 sm:mx-6">
-          <div className="van-install-sheet flex items-center gap-3 rounded-2xl px-3.5 py-3">
+          <div className="van-install-sheet flex flex-wrap items-center gap-3 rounded-2xl px-3.5 py-3">
             <div className="w-9 h-9 rounded-xl bg-[#17352b] text-white flex items-center justify-center shrink-0">
               <Download className="w-4 h-4" />
             </div>
@@ -255,14 +261,14 @@ export const Navigation: React.FC<NavigationProps> = ({
             <button
               type="button"
               onClick={() => void handleInstallPwa()}
-              className="shrink-0 px-3 py-2 rounded-xl bg-[#eb6c32] text-white text-[11px] font-bold"
+              className="shrink-0 min-h-11 px-3 py-2 rounded-xl bg-[#eb6c32] text-white text-[11px] font-bold"
             >
               Installer
             </button>
             <button
               type="button"
               onClick={dismissInstall}
-              className="p-1.5 text-[#6f786f]"
+              className="touch-target flex items-center justify-center min-h-11 min-w-11 text-[#6f786f]"
               aria-label="Fermer"
             >
               <X className="w-4 h-4" />
@@ -281,7 +287,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                   Pour l’utiliser comme une vraie app mobile.
                 </p>
               </div>
-              <button type="button" onClick={() => setShowIosHelp(false)} className="p-1 text-[#6f786f]">
+              <button type="button" onClick={() => setShowIosHelp(false)} className="touch-target flex items-center justify-center min-h-11 min-w-11 text-[#6f786f]">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -317,8 +323,8 @@ export const Navigation: React.FC<NavigationProps> = ({
       )}
 
       {(showGeoToast || showSyncToast) && (
-        <div className="fixed inset-x-0 bottom-[4.85rem] z-40 px-3 pointer-events-none sm:bottom-[5.25rem] pb-[env(safe-area-inset-bottom)]">
-          <div className="mx-auto max-w-xl space-y-2 pointer-events-auto">
+        <div className="fixed inset-x-0 bottom-[calc(3.85rem+env(safe-area-inset-bottom))] z-40 px-3 pointer-events-none sm:bottom-[calc(4.25rem+env(safe-area-inset-bottom))]">
+          <div className="mx-auto max-w-3xl space-y-2 pointer-events-auto">
             {showSyncToast && (
               <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 shadow-lg">
                 <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
@@ -348,8 +354,8 @@ export const Navigation: React.FC<NavigationProps> = ({
         </div>
       )}
 
-      <nav className="van-bottom-nav fixed inset-x-0 bottom-0 z-40 px-2.5 pb-[max(.65rem,env(safe-area-inset-bottom))] pointer-events-none sm:px-3">
-        <div className="mx-auto flex max-w-xl items-stretch justify-around gap-0.5 rounded-[1.55rem] p-1.5 pointer-events-auto sm:rounded-[1.7rem] sm:gap-1">
+      <nav className="van-bottom-nav fixed inset-x-0 bottom-0 z-40 pointer-events-none">
+        <div className="flex w-full items-stretch justify-around gap-0.5 px-1 py-2 pb-[max(0.35rem,env(safe-area-inset-bottom))] pointer-events-auto sm:gap-1 sm:px-2 sm:pb-[max(0.45rem,env(safe-area-inset-bottom))]">
           {navItems.map((item) => {
             const isActive = activeTab === item.id;
             return (
@@ -358,19 +364,19 @@ export const Navigation: React.FC<NavigationProps> = ({
                 type="button"
                 onClick={() => setActiveTab(item.id)}
                 aria-current={isActive ? 'page' : undefined}
-                className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-[1.15rem] py-1.5 sm:rounded-[1.25rem] sm:py-2"
+                className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-2 sm:rounded-[1.1rem]"
               >
                 {isActive && (
                   <motion.span
                     layoutId="van-nav-bubble"
-                    className="absolute inset-0 rounded-[1.15rem] bg-[#17352b] shadow-[0_7px_18px_rgba(23,53,43,.22)] sm:rounded-[1.25rem]"
+                    className="absolute inset-0 rounded-xl bg-[#17352b] shadow-[0_6px_16px_rgba(23,53,43,.2)] sm:rounded-[1.1rem]"
                     transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.6 }}
                   />
                 )}
 
-                <span className="relative z-10 flex h-6 w-6 items-center justify-center sm:h-7 sm:w-7">
+                <span className="relative z-10 flex h-5 w-5 items-center justify-center sm:h-6 sm:w-6">
                   {React.cloneElement(item.icon as React.ReactElement<{ className?: string }>, {
-                    className: `w-[17px] h-[17px] sm:w-[18px] sm:h-[18px] transition-colors duration-200 ${
+                    className: `w-4 h-4 sm:w-[17px] sm:h-[17px] transition-colors duration-200 ${
                       isActive ? 'text-[#ff9a62]' : 'text-[#7d857d]'
                     }`,
                   })}
@@ -380,8 +386,8 @@ export const Navigation: React.FC<NavigationProps> = ({
                 </span>
 
                 <span
-                  className={`relative z-10 text-[8.5px] sm:text-[9px] leading-none tracking-tight truncate max-w-full px-0.5 transition-colors duration-200 ${
-                    isActive ? 'text-white font-bold' : 'text-[#737d74] font-semibold'
+                  className={`relative z-10 max-w-full truncate px-0.5 text-[8px] leading-none tracking-tight sm:text-[9px] ${
+                    isActive ? 'font-bold text-white' : 'font-semibold text-[#737d74]'
                   }`}
                 >
                   {item.label}

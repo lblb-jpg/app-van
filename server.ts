@@ -12,6 +12,23 @@ const PORT = 3000;
 
 app.use(express.json({ limit: "10mb" }));
 
+// Vercel may invoke /api with a stripped path (/van-spots/...). Normalize it.
+app.use((req, _res, next) => {
+  if (!process.env.VERCEL) return next();
+  const url = req.url || "";
+  const pathOnly = url.split("?")[0] || "";
+  if (pathOnly === "/api" || pathOnly.startsWith("/api/")) return next();
+  if (
+    pathOnly.startsWith("/van-spots") ||
+    pathOnly.startsWith("/france-places") ||
+    pathOnly.startsWith("/auth") ||
+    pathOnly === "/health"
+  ) {
+    req.url = `/api${url.startsWith("/") ? url : `/${url}`}`;
+  }
+  next();
+});
+
 function stripQuotes(value: string) {
   return value.trim().replace(/^["']|["']$/g, "");
 }
@@ -374,7 +391,8 @@ async function main() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    app.get("*", (req, res, next) => {
+      if (req.path.startsWith("/api")) return next();
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

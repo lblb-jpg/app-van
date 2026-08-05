@@ -1,27 +1,30 @@
-# Supabase — VanLife sync
+# Supabase — Vanlife Club
 
-## Setup (une fois)
+## Setup
 
-1. Crée / ouvre le projet Supabase (même URL que `VITE_SUPABASE_URL` dans `.env.local`).
+1. Crée un projet Supabase et copie URL + clé anon dans `.env.local`.
 2. SQL Editor → exécute **dans l’ordre** :
-   - `vanlife_on_shared.sql` *(si le projet partage déjà une base, ex. Livret)*  
-     **ou** `schema.sql` *(projet greenfield)*
-   - `ensure_full_sync.sql` ← **obligatoire** (photos étapes, invite, bucket public, realtime)
-3. Auth → active **Email** (+ **Anonymous** si tu utilises la connexion rapide).
-4. Crée les comptes équipage Adel / Paul / Yanis (ou laisse l’app les créer via le serveur).
+   - `schema.sql` *(projet neuf)* **ou** `vanlife_on_shared.sql` *(base partagée)*
+   - `ensure_full_sync.sql` *(obligatoire : photos, invite, storage, realtime)*
+3. Auth → active **Email** (et **Anonymous** si connexion rapide).
 
-## Ce qui est synchronisé
+Scripts utilitaires :
+
+- `live_locations_and_invite.sql` — positions live + codes d’invitation
+- `add_waypoint_photo_urls.sql` — photos sur les étapes
+- `reset_data_keep_users.sql` — reset données, conserve les users
+
+## Sync
 
 | Domaine | Sync |
 |---------|------|
 | Équipage / profils | Oui |
-| POIs carte | Oui (push + live) |
+| POIs carte | Oui |
 | Étapes + photos | Oui |
-| Journal | Oui |
-| Galerie photos | Oui (Storage `trip-photos`) |
+| Journal & galerie | Oui (Storage `trip-photos`) |
 | Dépenses | Oui |
 | Traces GPS | Oui |
-| Positions live | Oui (`member_locations`) |
-| Code invitation | Oui (`join_trip_by_code`) |
+| Positions live | Oui |
+| Code invitation | Oui |
 
-Au démarrage, l’app appelle `syncLocalDataToCloud` : tout ce qui est encore local (IDs non-UUID) est poussé vers Supabase, puis l’état cloud devient la source de vérité.
+Au démarrage, le local non-UUID est poussé vers le cloud, puis Supabase devient la source de vérité.

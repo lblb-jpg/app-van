@@ -149,23 +149,24 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
   const activeWaypoint = sortedWaypoints.find((wp) => wp.status === 'active');
 
   return (
-    <div className="w-full max-w-lg mx-auto p-4 space-y-4 pb-28">
+    <div className="page-pad space-y-3 sm:space-y-4">
       {/* Trip overview */}
-      <div className="relative overflow-hidden bg-zinc-950 rounded-[2rem] p-5 shadow-lg shadow-zinc-950/10 text-white">
+      <div className="relative overflow-hidden bg-zinc-950 rounded-[1.75rem] p-4 shadow-lg shadow-zinc-950/10 text-white sm:rounded-[2rem] sm:p-5">
         <div className="absolute -right-8 -top-10 w-40 h-40 rounded-full bg-emerald-500/15 blur-2xl" />
-        <div className="relative flex items-start justify-between gap-3">
-          <div>
-            <span className="text-[10px] font-extrabold tracking-[0.16em] text-emerald-300 uppercase">Itinéraire en cours</span>
-            <h2 className="font-extrabold text-xl tracking-tight mt-1 flex items-center gap-2">
-              <Milestone className="w-5 h-5 text-emerald-400" /> Étapes & arrêts
+        <div className="relative flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <span className="text-[10px] font-extrabold tracking-[0.16em] text-emerald-300 uppercase">Itinéraire</span>
+            <h2 className="font-extrabold text-lg sm:text-xl tracking-tight mt-1 flex items-center gap-2">
+              <Milestone className="w-5 h-5 shrink-0 text-emerald-400" /> Étapes & arrêts
             </h2>
-            <p className="text-xs text-zinc-300 font-medium mt-1 max-w-[235px]">
-              Retrouvez l’essentiel de chaque spot, au bon moment.
+            <p className="text-xs text-zinc-300 font-medium mt-1">
+              L’essentiel de chaque spot, au bon moment.
             </p>
           </div>
         <button
+          type="button"
           onClick={() => setShowAddModal(true)}
-          className="shrink-0 px-3.5 py-2.5 rounded-2xl bg-white hover:bg-emerald-50 text-zinc-900 font-bold text-xs shadow-sm transition-all flex items-center gap-1.5"
+          className="shrink-0 min-h-11 px-3.5 py-2.5 rounded-2xl bg-white hover:bg-emerald-50 text-zinc-900 font-bold text-xs shadow-sm transition-all flex items-center gap-1.5"
         >
           <Plus className="w-4 h-4 text-emerald-600" /> Ajouter
         </button>
@@ -211,8 +212,8 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                     : 'border-zinc-200 hover:border-zinc-300'
                 }`}
               >
-                <div className="p-4 flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
+                <div className="p-3.5 sm:p-4 flex items-start justify-between gap-2.5">
+                  <div className="flex min-w-0 flex-1 items-start gap-2.5">
                     {/* Badge Order Circle */}
                     <div
                       className={`w-9 h-9 rounded-2xl flex items-center justify-center font-black text-xs shrink-0 font-mono ${
@@ -226,18 +227,19 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                       {wp.order}
                     </div>
 
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-extrabold text-[15px] leading-tight text-zinc-900">
+                        <h3 className="font-extrabold text-[15px] leading-tight text-zinc-900 truncate max-w-full">
                           {wp.title}
                         </h3>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : isDone ? 'bg-zinc-100 text-zinc-600' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>
+                        <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ${isActive ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : isDone ? 'bg-zinc-100 text-zinc-600' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>
                           {isActive ? '● ' : isDone ? '✓ ' : '• '}{statusLabel}
                         </span>
                       </div>
 
-                      <p className="text-xs text-zinc-500 font-medium flex items-center gap-1 mt-0.5">
-                        <MapPin className="w-3.5 h-3.5 text-zinc-400" /> {wp.locationName}
+                      <p className="text-xs text-zinc-500 font-medium flex items-center gap-1 mt-0.5 min-w-0">
+                        <MapPin className="w-3.5 h-3.5 shrink-0 text-zinc-400" />
+                        <span className="truncate">{wp.locationName}</span>
                       </p>
 
                       <div className="mt-2 flex items-center gap-2 flex-wrap">
@@ -265,16 +267,18 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                   {/* Actions & Up/Down Ordering */}
                   <div className="flex flex-col items-end gap-1.5 shrink-0">
                     <button
+                      type="button"
                       onClick={() => onSelectOnMap(wp.lat, wp.lng)}
-                      className="p-2 rounded-xl bg-zinc-900 text-white hover:bg-zinc-800 transition-colors"
+                      className="touch-target flex items-center justify-center rounded-xl bg-zinc-900 text-white hover:bg-zinc-800 transition-colors"
                       title={`Voir ${wp.title} sur la carte`}
                       aria-label={`Voir ${wp.title} sur la carte`}
                     >
                       <Navigation className="w-3.5 h-3.5 text-emerald-400" />
                     </button>
                     <button
+                      type="button"
                       onClick={() => setExpandedWaypointId(isExpanded ? null : wp.id)}
-                      className="p-2 rounded-xl bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 transition-colors"
+                      className="touch-target flex items-center justify-center rounded-xl bg-zinc-100 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 transition-colors"
                       aria-label={isExpanded ? `Réduire ${wp.title}` : `Afficher les détails de ${wp.title}`}
                     >
                       <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
@@ -309,28 +313,31 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                       ))}
                     </div>
                   )}
-                  <div className="pt-3 border-t border-zinc-100 flex items-center justify-between gap-2">
+                  <div className="pt-3 border-t border-zinc-100 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Mettre à jour</span>
-                    <div className="flex items-center gap-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
                     <button
+                      type="button"
                       onClick={() => onUpdateWaypointStatus(wp.id, 'done')}
-                      className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                      className={`touch-chip px-3 py-2 rounded-full text-[10px] font-bold ${
                         isDone ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
                       }`}
                       >
                       Fait
                     </button>
                     <button
+                      type="button"
                       onClick={() => onUpdateWaypointStatus(wp.id, 'active')}
-                      className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                      className={`touch-chip px-3 py-2 rounded-full text-[10px] font-bold ${
                         isActive ? 'bg-emerald-600 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
                       }`}
                       >
                       Actif
                     </button>
                     <button
+                      type="button"
                       onClick={() => onUpdateWaypointStatus(wp.id, 'upcoming')}
-                      className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                      className={`touch-chip px-3 py-2 rounded-full text-[10px] font-bold ${
                         wp.status === 'upcoming' ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
                       }`}
                       >
@@ -338,16 +345,16 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                     </button>
                   </div>
                   </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
                       Organisation
                     </span>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <button
                         type="button"
                         onClick={() => onReorderWaypoint(wp.id, 'up')}
                         disabled={index === 0}
-                        className="flex items-center gap-1 rounded-xl bg-zinc-100 px-2.5 py-1.5 text-[10px] font-bold text-zinc-700 hover:bg-zinc-200 disabled:opacity-30"
+                        className="flex min-h-9 items-center gap-1 rounded-xl bg-zinc-100 px-3 py-2 text-[10px] font-bold text-zinc-700 hover:bg-zinc-200 disabled:opacity-30"
                       >
                         <ChevronUp className="h-3.5 w-3.5" /> Monter
                       </button>
@@ -355,7 +362,7 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                         type="button"
                         onClick={() => onReorderWaypoint(wp.id, 'down')}
                         disabled={index === sortedWaypoints.length - 1}
-                        className="flex items-center gap-1 rounded-xl bg-zinc-100 px-2.5 py-1.5 text-[10px] font-bold text-zinc-700 hover:bg-zinc-200 disabled:opacity-30"
+                        className="flex min-h-9 items-center gap-1 rounded-xl bg-zinc-100 px-3 py-2 text-[10px] font-bold text-zinc-700 hover:bg-zinc-200 disabled:opacity-30"
                       >
                         <ChevronDown className="h-3.5 w-3.5" /> Descendre
                       </button>
@@ -366,7 +373,7 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                             onDeleteWaypoint(wp.id);
                           }
                         }}
-                        className="flex items-center gap-1 rounded-xl bg-red-50 px-2.5 py-1.5 text-[10px] font-bold text-red-600 hover:bg-red-100"
+                        className="flex min-h-9 items-center gap-1 rounded-xl bg-red-50 px-3 py-2 text-[10px] font-bold text-red-600 hover:bg-red-100"
                       >
                         <Trash2 className="h-3.5 w-3.5" /> Supprimer
                       </button>
@@ -383,9 +390,9 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-zinc-950/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="w-full max-w-md max-h-[90dvh] overflow-y-auto bg-white rounded-[2rem] p-6 shadow-2xl border border-zinc-200 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-100 mb-4">
-              <h3 className="font-extrabold text-sm text-zinc-900 flex items-center gap-1.5">
-                <Milestone className="w-4 h-4 text-emerald-600" /> Ajouter une Étape au Road Trip
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-zinc-100 mb-4">
+              <h3 className="min-w-0 font-extrabold text-sm text-zinc-900 flex items-center gap-1.5 leading-snug">
+                <Milestone className="w-4 h-4 shrink-0 text-emerald-600" /> Ajouter une étape
               </h3>
               <button
                 type="button"
@@ -393,7 +400,8 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                   resetAddForm();
                   setShowAddModal(false);
                 }}
-                className="p-1 rounded-full text-zinc-400 hover:text-zinc-600"
+                className="touch-target flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-600 -mr-1"
+                aria-label="Fermer"
               >
                 <X className="w-5 h-5" />
               </button>

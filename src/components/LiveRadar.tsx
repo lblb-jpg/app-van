@@ -113,7 +113,7 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
 
   if (!currentFriend) {
     return (
-      <div className="w-full max-w-lg mx-auto p-4 pb-28 text-center text-sm text-zinc-500">
+      <div className="page-pad text-center text-sm text-zinc-500">
         Chargement de l’équipage…
       </div>
     );
@@ -243,7 +243,7 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
   };
 
   return (
-    <div className="w-full max-w-lg mx-auto p-4 space-y-4 pb-28">
+    <div className="page-pad space-y-3 sm:space-y-4">
       <div className="bg-white border border-zinc-200 rounded-[2rem] p-5 shadow-xs">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-2xl bg-[#17352b] text-white flex items-center justify-center shrink-0">
@@ -378,7 +378,7 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
                   className="w-full h-full object-cover rounded-full"
                 />
               </div>
-              <span className="text-[10px] font-bold text-white mt-2 bg-zinc-800 px-2.5 py-1 rounded-full border border-zinc-700 whitespace-nowrap">
+              <span className="max-w-[5.5rem] truncate text-[10px] font-bold text-white mt-2 bg-zinc-800 px-2.5 py-1 rounded-full border border-zinc-700">
                 Toi
               </span>
             </div>
@@ -411,7 +411,7 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
                       className="w-full h-full object-cover rounded-full"
                     />
                   </div>
-                  <span className="text-[10px] font-bold text-zinc-100 bg-zinc-950/90 px-2 py-0.5 rounded-full mt-1 whitespace-nowrap border border-zinc-700">
+                  <span className="max-w-[5.5rem] truncate text-[10px] font-bold text-zinc-100 bg-zinc-950/90 px-2 py-0.5 rounded-full mt-1 border border-zinc-700">
                     {friend.name} · {formatDistance(distance)}
                   </span>
                 </div>
@@ -456,7 +456,7 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
               </button>
             </div>
             <div className="flex items-center gap-2">
-              <code className="flex-1 text-center text-lg font-black tracking-[0.28em] text-zinc-900 bg-white rounded-xl border border-zinc-200 py-2.5">
+              <code className="flex-1 min-w-0 text-center text-base font-black tracking-[0.12em] text-zinc-900 bg-white rounded-xl border border-zinc-200 py-2.5 sm:text-lg sm:tracking-[0.28em]">
                 {inviteCode || '········'}
               </code>
               <button
@@ -551,7 +551,7 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 text-right shrink-0">
+                <div className="flex flex-wrap items-center justify-end gap-2 text-right shrink-0">
                   {isMe ? (
                     <span
                       className={`inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-1 rounded-xl border ${
@@ -591,7 +591,7 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
                     <button
                       type="button"
                       onClick={() => openProfileSettings(friend)}
-                      className="grid h-8 w-8 place-items-center rounded-xl bg-white text-zinc-500 ring-1 ring-zinc-200 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+                      className="grid h-11 w-11 place-items-center rounded-xl bg-white text-zinc-500 ring-1 ring-zinc-200 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
                       title={`Modifier le profil de ${friend.name}`}
                       aria-label={`Modifier le profil de ${friend.name}`}
                     >
@@ -623,7 +623,7 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
               <button
                 type="button"
                 onClick={() => setEditingFriend(null)}
-                className="grid h-8 w-8 place-items-center rounded-xl bg-zinc-100 text-zinc-500"
+                className="grid h-11 w-11 place-items-center rounded-xl bg-zinc-100 text-zinc-500"
                 aria-label="Fermer"
               >
                 <X className="h-4 w-4" />

@@ -148,7 +148,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
     const spots = result?.spots || [];
     if (filter === 'recommended') return spots.filter((spot) => spot.confidence !== 'verify');
     if (filter === 'free') return spots.filter((spot) => spot.fee === 'no' || spot.feeAmount === '0');
-    if (filter === 'water') return spots.filter((spot) => spot.amenities.includes('Eau potable'));
+    if (filter === 'water') return spots.filter((spot) => (spot.amenities || []).includes('Eau potable'));
     return spots;
   }, [result, filter]);
 
@@ -158,19 +158,23 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
   };
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-4 p-3 pb-28 sm:p-4 sm:pb-28">
-      <section className="relative overflow-visible rounded-[2rem] bg-[#17352b] p-5 text-white shadow-[0_20px_50px_rgba(23,53,43,.16)] sm:p-7">
-        <div className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-[#eb6c32]/20 blur-3xl" />
+    <div className="page-pad space-y-3 sm:space-y-4">
+      <section className="relative overflow-visible rounded-[1.75rem] bg-[#17352b] p-4 text-white shadow-[0_20px_50px_rgba(23,53,43,.16)] sm:rounded-[2rem] sm:p-6 md:p-7">
+        <div className="pointer-events-none absolute -right-16 -top-20 h-52 w-52 rounded-full bg-[#eb6c32]/20 blur-3xl sm:-right-20 sm:-top-24 sm:h-64 sm:w-64" />
         <div className="relative">
-          <div className="flex items-start gap-3">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/10 text-[#ff9a62] ring-1 ring-white/10">
-              <BedDouble className="h-5 w-5" />
+          <div className="flex items-start gap-2.5 sm:gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 text-[#ff9a62] ring-1 ring-white/10 sm:h-11 sm:w-11 sm:rounded-2xl">
+              <BedDouble className="h-4 w-4 sm:h-5 sm:w-5" />
             </span>
-            <div>
-              <p className="text-[9px] font-extrabold uppercase tracking-[.18em] text-[#ff9a62]">Moteur de spots van</p>
-              <h2 className="mt-1 text-2xl font-extrabold tracking-tight">Où dormir ce soir ?</h2>
-              <p className="mt-1 text-[11px] font-semibold leading-relaxed text-white/50">
-                Entre seulement une ville : on cherche jusqu’à 80 lieux autour.
+            <div className="min-w-0 flex-1">
+              <p className="text-[8px] font-extrabold uppercase tracking-[.16em] text-[#ff9a62] sm:text-[9px] sm:tracking-[.18em]">
+                Moteur de spots van
+              </p>
+              <h2 className="mt-0.5 text-[1.35rem] font-extrabold leading-tight tracking-tight sm:mt-1 sm:text-2xl">
+                Où dormir ce soir&nbsp;?
+              </h2>
+              <p className="mt-1 max-w-[34ch] text-[10px] font-semibold leading-relaxed text-white/50 sm:max-w-none sm:text-[11px]">
+                Entre seulement une ville&nbsp;: on cherche jusqu’à 80 lieux autour.
               </p>
             </div>
           </div>
@@ -180,9 +184,9 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
               event.preventDefault();
               void runSearch();
             }}
-            className="relative mt-5 flex gap-2 rounded-[1.35rem] bg-white p-1.5 shadow-xl"
+            className="relative mt-4 flex items-stretch gap-1.5 rounded-[1.2rem] bg-white p-1.5 shadow-xl sm:mt-5 sm:gap-2 sm:rounded-[1.35rem]"
           >
-            <label className="flex min-w-0 flex-1 items-center gap-2 px-2.5">
+            <label className="flex min-w-0 flex-1 items-center gap-2 px-2 sm:px-2.5">
               <Search className="h-4 w-4 shrink-0 text-[#eb6c32]" />
               <input
                 value={query}
@@ -192,20 +196,20 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                 }}
                 placeholder="Annecy, Chamonix, Gordes…"
                 aria-label="Ville ou village"
-                className="min-w-0 flex-1 bg-transparent py-2 text-sm font-bold text-[#17352b] outline-none placeholder:text-zinc-400"
+                className="min-w-0 flex-1 bg-transparent py-2.5 text-[13px] font-bold text-[#17352b] outline-none placeholder:text-zinc-400 sm:py-2 sm:text-sm"
               />
             </label>
             <button
               type="submit"
               disabled={loading}
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-[1rem] bg-[#eb6c32] text-white shadow-md transition-all hover:bg-[#d95d29] disabled:opacity-60"
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-[0.95rem] bg-[#eb6c32] text-white shadow-md transition-all hover:bg-[#d95d29] disabled:opacity-60 sm:rounded-[1rem]"
               aria-label="Rechercher des spots"
             >
               {loading ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <Search className="h-5 w-5" />}
             </button>
 
             {showSuggestions && queryEdited && normalizeQuery(query) !== submittedQuery && (
-              <div className="absolute left-0 right-0 top-[calc(100%+.45rem)] z-30 max-h-72 overflow-y-auto rounded-[1.35rem] border border-[#17352b]/10 bg-white p-1.5 text-[#17352b] shadow-2xl">
+              <div className="absolute left-0 right-0 top-[calc(100%+.45rem)] z-30 max-h-[min(18rem,50dvh)] overflow-y-auto rounded-[1.2rem] border border-[#17352b]/10 bg-white p-1.5 text-[#17352b] shadow-2xl sm:max-h-72 sm:rounded-[1.35rem]">
                 <div className="flex items-center justify-between px-3 py-2">
                   <span className="text-[9px] font-extrabold uppercase tracking-[.14em] text-zinc-400">Communes de France</span>
                   {suggesting && <LoaderCircle className="h-3.5 w-3.5 animate-spin text-[#eb6c32]" />}
@@ -221,7 +225,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                       setShowSuggestions(false);
                       void runSearch(place.name, place);
                     }}
-                    className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-[#f5f1e7]"
+                    className="flex w-full items-center gap-2.5 rounded-2xl px-2.5 py-2.5 text-left transition-colors hover:bg-[#f5f1e7] sm:gap-3 sm:px-3"
                   >
                     <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
                       <MapPin className="h-4 w-4" />
@@ -233,7 +237,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                       </small>
                     </span>
                     {place.population > 0 && (
-                      <span className="shrink-0 text-[8px] font-bold text-zinc-300">
+                      <span className="hidden shrink-0 text-[8px] font-bold text-zinc-300 sm:inline">
                         {place.population.toLocaleString('fr-FR')} hab.
                       </span>
                     )}
@@ -243,33 +247,42 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
             )}
           </form>
 
-          <div className="mt-3 flex items-center justify-between gap-3">
-            <div className="flex min-w-0 gap-1.5 overflow-x-auto scrollbar-none">
-              {recentSearches.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => {
-                    setQuery(item);
-                    void runSearch(item);
-                  }}
-                  className="shrink-0 rounded-full bg-white/8 px-2.5 py-1 text-[9px] font-bold text-white/65 ring-1 ring-white/10 hover:bg-white/15"
-                >
-                  {item}
-                </button>
-              ))}
+          <div className="mt-3 flex flex-col gap-2.5 sm:mt-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <div className="relative min-w-0 flex-1">
+              <div className="flex gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {recentSearches.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => {
+                      setQuery(item);
+                      void runSearch(item);
+                    }}
+                    title={item}
+                    className="max-w-[9.5rem] shrink-0 truncate rounded-full bg-white/8 px-2.5 py-1.5 text-[9px] font-bold text-white/70 ring-1 ring-white/10 transition-colors hover:bg-white/15 sm:max-w-[11rem] sm:py-1"
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+              {recentSearches.length > 0 && (
+                <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-[#17352b] to-transparent sm:w-10" />
+              )}
             </div>
-            <select
-              value={radiusKm}
-              onChange={(event) => setRadiusKm(Number(event.target.value))}
-              aria-label="Rayon de recherche"
-              className="shrink-0 rounded-full border-0 bg-white/10 px-2.5 py-1 text-[9px] font-extrabold text-white outline-none ring-1 ring-white/10"
-            >
-              <option value={10}>10 km</option>
-              <option value={20}>20 km</option>
-              <option value={30}>30 km</option>
-              <option value={40}>40 km</option>
-            </select>
+            <label className="flex shrink-0 items-center justify-between gap-2 rounded-full bg-white/8 px-3 py-1.5 ring-1 ring-white/10 sm:justify-start sm:py-1">
+              <span className="text-[9px] font-extrabold uppercase tracking-[.12em] text-white/45 sm:hidden">Rayon</span>
+              <select
+                value={radiusKm}
+                onChange={(event) => setRadiusKm(Number(event.target.value))}
+                aria-label="Rayon de recherche"
+                className="border-0 bg-transparent text-[10px] font-extrabold text-white outline-none sm:text-[9px]"
+              >
+                <option value={10}>10 km</option>
+                <option value={20}>20 km</option>
+                <option value={30}>30 km</option>
+                <option value={40}>40 km</option>
+              </select>
+            </label>
           </div>
         </div>
       </section>
@@ -294,13 +307,13 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[9px] font-extrabold uppercase tracking-[.14em] text-[#eb6c32]">Zone trouvée</p>
-                <h3 className="mt-1 truncate text-base font-extrabold text-[#17352b]">{result.place.name}</h3>
+                <h3 className="mt-1 truncate text-base font-extrabold text-[#17352b]">{result.place?.name || result.query}</h3>
                 <p className="mt-1 text-[10px] font-semibold text-zinc-500">
                   {result.count} lieu(x) dans un rayon de {result.radiusKm} km
                 </p>
               </div>
               <span className="shrink-0 rounded-2xl bg-emerald-50 px-3 py-2 text-center text-emerald-800 ring-1 ring-emerald-200">
-                <strong className="block text-lg font-black">{result.spots.filter((spot) => spot.confidence === 'official').length}</strong>
+                <strong className="block text-lg font-black">{(result.spots || []).filter((spot) => spot.confidence === 'official').length}</strong>
                 <small className="text-[8px] font-extrabold uppercase">officiels</small>
               </span>
             </div>
@@ -347,8 +360,9 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <h3 className="truncate text-sm font-extrabold text-[#17352b]">{spot.name}</h3>
-                            <p className="mt-0.5 flex items-center gap-1 text-[10px] font-semibold text-zinc-500">
-                              <MapPin className="h-3 w-3 text-[#eb6c32]" /> {spot.label} · {spot.distanceKm} km
+                            <p className="mt-0.5 flex min-w-0 items-center gap-1 text-[10px] font-semibold text-zinc-500">
+                              <MapPin className="h-3 w-3 shrink-0 text-[#eb6c32]" />
+                              <span className="truncate">{spot.label} · {spot.distanceKm} km</span>
                             </p>
                           </div>
                           <span className={`shrink-0 rounded-full px-2 py-1 text-[8px] font-extrabold uppercase ${
@@ -362,7 +376,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                           </span>
                         </div>
 
-                        {spot.amenities.length > 0 && (
+                        {spot.amenities?.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-1">
                             {spot.amenities.slice(0, 5).map((amenity) => (
                               <span key={amenity} className="rounded-full bg-[#f0ece2] px-2 py-1 text-[8px] font-bold text-[#59675f]">
@@ -378,21 +392,21 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                       <button
                         type="button"
                         onClick={() => onSelectOnMap(spot.lat, spot.lng, spot.name, getSpotEmoji(spot))}
-                        className="flex items-center justify-center gap-1 rounded-xl bg-[#f0ece2] py-2 text-[9px] font-extrabold text-[#17352b]"
+                        className="flex min-h-11 items-center justify-center gap-1 rounded-xl bg-[#f0ece2] py-2 text-[9px] font-extrabold text-[#17352b]"
                       >
                         <MapPin className="h-3.5 w-3.5" /> Carte
                       </button>
                       <button
                         type="button"
                         onClick={() => setNavigationSpot(spot)}
-                        className="flex items-center justify-center gap-1 rounded-xl bg-[#17352b] py-2 text-[9px] font-extrabold text-white"
+                        className="flex min-h-11 items-center justify-center gap-1 rounded-xl bg-[#17352b] py-2 text-[9px] font-extrabold text-white"
                       >
                         <Navigation className="h-3.5 w-3.5 text-[#ff9a62]" /> Y aller
                       </button>
                       <button
                         type="button"
                         onClick={() => saveSpot(spot)}
-                        className={`flex items-center justify-center gap-1 rounded-xl py-2 text-[9px] font-extrabold ${
+                        className={`flex min-h-11 items-center justify-center gap-1 rounded-xl py-2 text-[9px] font-extrabold ${
                           savedIds.includes(spot.id) ? 'bg-emerald-100 text-emerald-800' : 'bg-[#eb6c32] text-white'
                         }`}
                       >
@@ -404,7 +418,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                     <button
                       type="button"
                       onClick={() => setExpandedId(expanded ? null : spot.id)}
-                      className="mt-2.5 flex w-full items-center justify-center gap-1 text-[9px] font-bold text-zinc-400 hover:text-zinc-700"
+                      className="mt-2.5 flex min-h-9 w-full items-center justify-center gap-1 text-[9px] font-bold text-zinc-400 hover:text-zinc-700"
                     >
                       {expanded ? 'Moins de détails' : 'Toutes les informations'}
                       <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
@@ -420,8 +434,8 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                         {spot.maxstay && <Detail icon={<Clock3 />} label="Durée max." value={spot.maxstay} />}
                         {spot.access && <Detail icon={<ShieldCheck />} label="Accès" value={detailValue(spot.access)!} />}
                         {spot.surface && <Detail icon={<Info />} label="Sol" value={spot.surface} />}
-                        {spot.amenities.includes('Eau potable') && <Detail icon={<Droplets />} label="Eau" value="Disponible" />}
-                        {spot.amenities.includes('Électricité') && <Detail icon={<Zap />} label="Électricité" value="Disponible" />}
+                        {spot.amenities?.includes('Eau potable') && <Detail icon={<Droplets />} label="Eau" value="Disponible" />}
+                        {spot.amenities?.includes('Électricité') && <Detail icon={<Zap />} label="Électricité" value="Disponible" />}
                       </div>
                       {spot.description && <p className="mt-3 rounded-xl bg-white p-2.5 text-[10px] leading-relaxed text-zinc-600 ring-1 ring-zinc-200">{spot.description}</p>}
                       <div className="mt-3 flex flex-wrap gap-2">
@@ -468,7 +482,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
             <p className="text-[9px] font-extrabold uppercase tracking-[.16em] text-[#eb6c32]">
               Ouvrir l’itinéraire
             </p>
-            <h3 className="mt-1 text-base font-extrabold text-[#17352b]">
+            <h3 className="mt-1 min-w-0 truncate text-base font-extrabold text-[#17352b]">
               Aller à {navigationSpot.name}
             </h3>
             <p className="mt-1 text-[10px] font-semibold text-zinc-500">

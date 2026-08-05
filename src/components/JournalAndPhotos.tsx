@@ -203,52 +203,57 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   }, [selectedPhotoPreview]);
 
   return (
-    <div className="w-full max-w-lg mx-auto p-4 space-y-4 pb-28">
+    <div className="page-pad space-y-3 sm:space-y-4">
       {/* Top Switcher & Action Header */}
-      <div className="bg-white border border-zinc-200 rounded-[2rem] p-4 shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-2xl ring-1 ring-zinc-200">
+      <div className="bg-white border border-zinc-200 rounded-[1.75rem] p-3.5 shadow-xs space-y-3 sm:rounded-[2rem] sm:p-4">
+        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex w-full items-center gap-1 bg-zinc-100 p-1 rounded-2xl ring-1 ring-zinc-200 sm:w-auto">
             <button
+              type="button"
               onClick={() => setActiveTab('journal')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              className={`min-h-10 flex-1 sm:flex-none justify-center px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
                 activeTab === 'journal'
                   ? 'bg-white text-zinc-900 shadow-xs'
                   : 'text-zinc-600 hover:text-zinc-900'
               }`}
             >
-              <BookOpen className="w-3.5 h-3.5 text-emerald-600" /> Journal de Bord
+              <BookOpen className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
+              <span>Journal</span>
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('photos')}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              className={`min-h-10 flex-1 sm:flex-none justify-center px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
                 activeTab === 'photos'
                   ? 'bg-white text-zinc-900 shadow-xs'
                   : 'text-zinc-600 hover:text-zinc-900'
               }`}
             >
-              <Camera className="w-3.5 h-3.5 text-emerald-600" /> Galerie Media
+              <Camera className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
+              <span>Photos</span>
             </button>
           </div>
 
           <button
+            type="button"
             onClick={() => (activeTab === 'journal' ? setShowNoteModal(true) : setShowPhotoModal(true))}
-            className="p-2.5 rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white shadow-xs transition-all font-bold text-xs flex items-center gap-1"
+            className="min-h-11 w-full sm:w-auto justify-center rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white shadow-xs transition-all font-bold text-xs flex items-center gap-1.5 px-4 py-2.5"
           >
             <Plus className="w-4 h-4 text-emerald-400" /> {activeTab === 'journal' ? 'Note' : 'Photo'}
           </button>
         </div>
 
         {/* Friend Filter Bar */}
-        <div className="flex items-center justify-between pt-1 border-t border-zinc-100">
-          <span className="text-xs font-bold text-zinc-500 flex items-center gap-1">
-            <Filter className="w-3.5 h-3.5 text-zinc-400" /> Filtrer par copain :
+        <div className="flex flex-col gap-2 pt-1 border-t border-zinc-100 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs font-bold text-zinc-500 flex items-center gap-1 shrink-0">
+            <Filter className="w-3.5 h-3.5 text-zinc-400" /> Filtrer
           </span>
           <select
             value={selectedFriendFilter}
             onChange={(e) => setSelectedFriendFilter(e.target.value)}
-            className="bg-zinc-100 text-xs font-bold text-zinc-800 rounded-xl px-2.5 py-1 focus:outline-hidden cursor-pointer ring-1 ring-zinc-200"
+            className="min-h-10 w-full sm:w-auto max-w-full bg-zinc-100 text-xs font-bold text-zinc-800 rounded-xl px-3 py-2 focus:outline-hidden cursor-pointer ring-1 ring-zinc-200"
           >
-            <option value="all">Tous les copains 🚐</option>
+            <option value="all">Tous les copains</option>
             {friends.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.name}
@@ -274,15 +279,15 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
                   key={note.id}
                   className="bg-white border border-zinc-200 rounded-[2rem] p-5 shadow-xs space-y-3"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
                       <img
                         src={author?.avatar}
                         alt={author?.name}
-                        className="w-7 h-7 rounded-full object-cover ring-2 ring-white"
+                        className="w-7 h-7 shrink-0 rounded-full object-cover ring-2 ring-white"
                       />
-                      <div>
-                        <span className="text-xs font-bold" style={{ color: author?.color }}>
+                      <div className="min-w-0">
+                        <span className="block truncate text-xs font-bold" style={{ color: author?.color }}>
                           {author?.name}
                         </span>
                         <p className="text-[10px] text-zinc-400 font-mono font-medium">{note.date}</p>
@@ -290,14 +295,15 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
                     </div>
 
                     {note.locationName && (
-                      <span className="text-[11px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-zinc-200 px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                        <MapPin className="w-3 h-3 text-emerald-600" /> {note.locationName}
+                      <span className="max-w-full sm:max-w-[55%] text-[11px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-zinc-200 px-2.5 py-1 rounded-full inline-flex items-center gap-1 min-w-0">
+                        <MapPin className="w-3 h-3 shrink-0 text-emerald-600" />
+                        <span className="truncate">{note.locationName}</span>
                       </span>
                     )}
                   </div>
 
                   <h3 className="font-extrabold text-sm text-zinc-900 leading-snug">{note.title}</h3>
-                  <p className="text-xs text-zinc-600 leading-relaxed whitespace-pre-line">{note.content}</p>
+                  <p className="note-body text-xs text-zinc-600 leading-relaxed whitespace-pre-line">{note.content}</p>
 
                   {note.photos && note.photos.length > 0 && (
                     <div
@@ -371,13 +377,15 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
       {showNoteModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
-              <h3 className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
-                <BookOpen className="w-4 h-4 text-emerald-600" /> Nouvelle Note au Journal
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100 mb-3">
+              <h3 className="min-w-0 font-bold text-sm text-slate-900 flex items-center gap-1.5 leading-snug">
+                <BookOpen className="w-4 h-4 shrink-0 text-emerald-600" /> Nouvelle note
               </h3>
               <button
+                type="button"
                 onClick={() => setShowNoteModal(false)}
-                className="p-1 rounded-full text-slate-400 hover:text-slate-600"
+                className="touch-target flex items-center justify-center rounded-full text-slate-400 hover:text-slate-600 -mr-1"
+                aria-label="Fermer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -429,19 +437,19 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
                 />
               </div>
 
-              <div className="pt-2 flex justify-end gap-2">
+              <div className="pt-2 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <button
                   type="button"
                   onClick={() => setShowNoteModal(false)}
-                  className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl"
+                  className="min-h-11 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl"
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 text-xs font-bold bg-emerald-600 text-white rounded-xl shadow-xs hover:bg-emerald-700"
+                  className="min-h-11 px-4 py-2.5 text-xs font-bold bg-emerald-600 text-white rounded-xl shadow-xs hover:bg-emerald-700"
                 >
-                  Publier la Note
+                  Publier
                 </button>
               </div>
             </form>
@@ -453,13 +461,15 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
       {showPhotoModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
-              <h3 className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
-                <Camera className="w-4 h-4 text-emerald-600" /> Ajouter une Photo Souvenir
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100 mb-3">
+              <h3 className="min-w-0 font-bold text-sm text-slate-900 flex items-center gap-1.5 leading-snug">
+                <Camera className="w-4 h-4 shrink-0 text-emerald-600" /> Ajouter une photo
               </h3>
               <button
+                type="button"
                 onClick={() => setShowPhotoModal(false)}
-                className="p-1 rounded-full text-slate-400 hover:text-slate-600"
+                className="touch-target flex items-center justify-center rounded-full text-slate-400 hover:text-slate-600 -mr-1"
+                aria-label="Fermer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -511,19 +521,19 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
                 </div>
               )}
 
-              <div className="pt-2 flex justify-end gap-2">
+              <div className="pt-2 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <button
                   type="button"
                   onClick={() => setShowPhotoModal(false)}
-                  className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl"
+                  className="min-h-11 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl"
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 text-xs font-bold bg-emerald-600 text-white rounded-xl shadow-xs hover:bg-emerald-700"
+                  className="min-h-11 px-4 py-2.5 text-xs font-bold bg-emerald-600 text-white rounded-xl shadow-xs hover:bg-emerald-700"
                 >
-                  Ajouter à la Galerie
+                  Ajouter
                 </button>
               </div>
             </form>

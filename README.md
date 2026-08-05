@@ -1,22 +1,61 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Vanlife Club
 
-# Run and deploy your AI Studio app
+PWA mobile-first pour road trip en van : GPS live, carte, étapes, radar d’équipage, talkie, journal & budget partagé.
 
-This contains everything you need to run your app locally.
+## Stack
 
-View your app in AI Studio: https://ai.studio/apps/02f97e59-1a52-47d4-ba8c-14dd85b6cc21
+- React 19 + Vite + TypeScript
+- Tailwind CSS 4
+- Supabase (auth, sync, realtime, storage)
+- Leaflet (carte)
+- Express (API locale / Vercel)
 
-## Run Locally
+## Démarrage
 
-**Prerequisites:**  Node.js
+```bash
+npm install
+cp .env.example .env.local
+# Remplis VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY
+npm run dev
+```
 
+Ouvre [http://localhost:3000](http://localhost:3000).
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Variables d’environnement
 
-# app-van
+Copie `.env.example` → `.env.local` (jamais committer `.env.local`).
+
+| Variable | Rôle |
+|----------|------|
+| `VITE_SUPABASE_URL` | URL du projet Supabase |
+| `VITE_SUPABASE_ANON_KEY` | Clé publishable (client) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Optionnel, serveur uniquement |
+| `VITE_TURN_*` | Optionnel, TURN pour le talkie WebRTC |
+
+## Scripts
+
+| Commande | Description |
+|----------|-------------|
+| `npm run dev` | Dev (Vite + Express) |
+| `npm run build` | Build production |
+| `npm start` | Lance le build |
+| `npm run lint` | Typecheck |
+
+## Supabase
+
+Voir [`supabase/README.md`](supabase/README.md) pour le schéma SQL et l’ordre d’exécution.
+
+## Fonctionnalités
+
+- **Carte** — spots, équipage live, traces GPS
+- **Dormir** — recherche de spots van
+- **GPS** — enregistrement, pause, import/export GPX
+- **Talkie** — push-to-talk WebRTC
+- **Étapes** — itinéraire, statuts, photos
+- **Journal** — notes & galerie
+- **VanPay** — dépenses type Tricount
+- **Radar** — distances & invitations
+
+## Licence
+
+Privé — usage personnel / équipage.

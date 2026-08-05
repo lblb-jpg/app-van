@@ -502,14 +502,14 @@ export const MapView: React.FC<MapViewProps> = ({
 
       {/* Top Filter Overlay Pill */}
       <div className="absolute top-3 left-3 right-3 z-10 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
-        <div className="flex items-center gap-1.5 bg-[#fffdf8]/92 backdrop-blur-xl px-3.5 py-2 rounded-[1rem] border border-[#17352b]/10 shadow-[0_8px_24px_rgba(23,53,43,.12)] pointer-events-auto">
-          <Filter className="w-3.5 h-3.5 text-[#eb6c32]" />
+        <div className="flex max-w-full min-w-0 flex-1 items-center gap-1.5 bg-[#fffdf8]/92 backdrop-blur-xl px-3.5 py-2 rounded-[1rem] border border-[#17352b]/10 shadow-[0_8px_24px_rgba(23,53,43,.12)] pointer-events-auto sm:flex-none">
+          <Filter className="w-3.5 h-3.5 text-[#eb6c32] shrink-0" />
           <select
             value={selectedPoiTypeFilter}
             onChange={(e) => setSelectedPoiTypeFilter(e.target.value)}
-            className="bg-transparent text-xs font-extrabold text-[#17352b] focus:outline-hidden cursor-pointer"
+            className="min-w-0 max-w-[10.5rem] bg-transparent text-xs font-extrabold text-[#17352b] focus:outline-hidden cursor-pointer sm:max-w-none"
           >
-            <option value="all">Tous les Spots & POIs</option>
+            <option value="all">Tous les spots</option>
             <option value="van_spot">🚐 Spots Van dodo</option>
             <option value="water">🚰 Points d'eau</option>
             <option value="viewpoint">📸 Panoramas & Vues</option>
@@ -524,8 +524,9 @@ export const MapView: React.FC<MapViewProps> = ({
           {(['outdoor', 'topo', 'satellite'] as const).map((mode) => (
             <button
               key={mode}
+              type="button"
               onClick={() => setActiveTile(mode)}
-              className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors ${
+              className={`min-h-9 px-2.5 py-1.5 rounded-full text-[10px] font-bold transition-colors ${
                 activeTile === mode
                   ? 'bg-[#17352b] text-white shadow-xs'
                   : 'text-[#68756d] hover:bg-[#eee9de]'
@@ -590,7 +591,7 @@ export const MapView: React.FC<MapViewProps> = ({
       )}
 
       {/* Floating actions: add POI + recenter */}
-      <div className="absolute bottom-24 right-4 z-10 flex flex-col gap-2">
+      <div className="absolute bottom-[calc(7.25rem+env(safe-area-inset-bottom))] right-4 z-10 flex flex-col gap-2">
         <button
           type="button"
           onClick={openAddPoiForm}
@@ -612,7 +613,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
       {/* Pick location banner */}
       {isPickingLocation && (
-        <div className="absolute inset-x-3 bottom-24 z-20 pointer-events-none">
+        <div className="absolute inset-x-3 bottom-[calc(7.25rem+env(safe-area-inset-bottom))] z-20 pointer-events-none">
           <div className="mx-auto max-w-sm rounded-2xl bg-[#17352b] text-white px-4 py-3 shadow-xl pointer-events-auto flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
@@ -656,7 +657,7 @@ export const MapView: React.FC<MapViewProps> = ({
               <button
                 type="button"
                 onClick={closeAddPoiForm}
-                className="p-1.5 rounded-full text-[#68756d] hover:bg-[#17352b]/5"
+                className="touch-target flex items-center justify-center min-h-11 min-w-11 rounded-full text-[#68756d] hover:bg-[#17352b]/5"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -684,7 +685,7 @@ export const MapView: React.FC<MapViewProps> = ({
                       type="button"
                       key={t.id}
                       onClick={() => setNewPoiType(t.id)}
-                      className={`py-2.5 px-2 rounded-2xl text-[11px] font-bold border transition-all ${
+                      className={`py-2.5 px-2 rounded-2xl text-[10px] leading-tight font-bold border transition-all ${
                         newPoiType === t.id
                           ? 'border-[#17352b] bg-[#17352b] text-white shadow-sm'
                           : 'border-[#17352b]/10 bg-white text-[#3d4a42] hover:bg-[#f5f1e7]'

@@ -54,14 +54,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     <div className="fixed inset-0 z-50 bg-zinc-950/50 backdrop-blur-xs flex items-center justify-center p-4">
       <div className="w-full max-w-sm bg-white rounded-[2rem] p-6 shadow-2xl border border-zinc-200 space-y-4">
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="font-extrabold text-zinc-900 text-base">Bienvenue à bord</h3>
+          <div className="min-w-0 flex-1">
+            <h3 className="font-extrabold text-zinc-900 text-base leading-snug">Bienvenue à bord</h3>
             <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
               Choisis ton profil pour synchroniser le voyage.
             </p>
           </div>
           {allowDismiss && onClose && (
-            <button type="button" onClick={onClose} className="p-1 text-zinc-400 hover:text-zinc-700">
+            <button type="button" onClick={onClose} className="touch-target flex items-center justify-center text-zinc-400 hover:text-zinc-700">
               <X className="w-5 h-5" />
             </button>
           )}

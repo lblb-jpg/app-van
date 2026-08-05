@@ -48,6 +48,7 @@ import { LiveRadar } from './components/LiveRadar';
 import { WalkieTalkie } from './components/WalkieTalkie';
 import { VanSleepSearch } from './components/VanSleepSearch';
 import { AuthModal } from './components/AuthModal';
+import { useWalkieRadio } from './hooks/useWalkieRadio';
 import { calculateHaversineDistance } from './services/gpx';
 import {
   avgMovingSpeedKmH,
@@ -149,6 +150,12 @@ export default function App() {
   const totalPausedMsRef = useRef(0);
   const pausedAtRef = useRef<number | null>(null);
   const [geoStatus, setGeoStatus] = useState<GeoStatus>({ state: 'idle' });
+
+  const walkie = useWalkieRadio({
+    cloudContext: cloudReady ? cloudRef.current : null,
+    friends,
+    currentFriendId,
+  });
 
   useEffect(() => {
     currentFriendIdRef.current = currentFriendId;
@@ -943,6 +950,20 @@ export default function App() {
         onDismissSyncError={() => setSyncError('')}
       />
 
+      {walkie.activeSpeaker && activeTab !== 'radio' && (
+        <button
+          type="button"
+          onClick={() => {
+            void walkie.unlockAudio();
+            setActiveTab('radio');
+          }}
+          className="fixed left-1/2 top-[4.6rem] z-[80] flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-2 truncate rounded-full bg-[#17352b] px-3 py-2 text-[11px] font-extrabold text-white shadow-[0_12px_30px_rgba(23,53,43,.35)] ring-1 ring-white/10"
+        >
+          <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[#eb6c32]" />
+          <span className="truncate">{walkie.activeSpeaker.name} parle en radio</span>
+        </button>
+      )}
+
       <main className={`page-surface flex-1 w-full ${
         activeTab === 'radio' ? 'min-h-0 overflow-hidden' : ''
       }`}>
@@ -1037,11 +1058,7 @@ export default function App() {
         )}
 
         {activeTab === 'radio' && (
-          <WalkieTalkie
-            cloudContext={cloudReady ? cloudRef.current : null}
-            friends={friends}
-            currentFriendId={currentFriendId}
-          />
+          <WalkieTalkie {...walkie} />
         )}
 
         {activeTab === 'radar' && (

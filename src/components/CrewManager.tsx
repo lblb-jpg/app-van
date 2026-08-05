@@ -117,10 +117,10 @@ export const CrewManager: React.FC<CrewManagerProps> = ({ isOpen, onClose, onAdd
     <div className="fixed inset-0 z-50 bg-zinc-950/40 backdrop-blur-xs flex items-center justify-center p-4">
       <div className="w-full max-w-sm bg-white rounded-[2rem] p-6 shadow-2xl border border-zinc-200 animate-in fade-in zoom-in-95 space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
-          <h3 className="font-extrabold text-sm text-zinc-900 flex items-center gap-1.5">
-            <UserPlus className="w-4 h-4 text-emerald-600" /> Ajouter un Copain au Van
+          <h3 className="min-w-0 flex-1 font-extrabold text-sm text-zinc-900 leading-snug flex items-center gap-1.5">
+            <UserPlus className="w-4 h-4 text-emerald-600 shrink-0" /> Ajouter un Copain au Van
           </h3>
-          <button type="button" onClick={handleClose} className="p-1 rounded-full text-zinc-400 hover:text-zinc-600">
+          <button type="button" onClick={handleClose} className="touch-target flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-600">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -207,7 +207,7 @@ export const CrewManager: React.FC<CrewManagerProps> = ({ isOpen, onClose, onAdd
                   type="button"
                   key={c}
                   onClick={() => setColor(c)}
-                  className={`w-6 h-6 rounded-full transition-transform ${
+                  className={`h-11 w-11 rounded-full transition-transform ${
                     color === c ? 'ring-2 ring-zinc-900 scale-110' : ''
                   }`}
                   style={{ backgroundColor: c }}

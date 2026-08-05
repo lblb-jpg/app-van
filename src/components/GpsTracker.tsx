@@ -132,117 +132,120 @@ export const GpsTracker: React.FC<GpsTrackerProps> = ({
   const statusBadge = () => {
     if (isRecording && isPaused) {
       return (
-        <span className="px-3 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 ring-1 ring-amber-200">
+        <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-amber-50 text-amber-800 ring-1 ring-amber-200">
           EN PAUSE
         </span>
       );
     }
     if (isRecording) {
       return (
-        <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 flex items-center gap-1.5 animate-pulse">
-          <span className="w-2 h-2 rounded-full bg-emerald-600"></span> ENREGISTREMENT
+        <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 flex items-center gap-1 animate-pulse">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span> REC
         </span>
       );
     }
     return (
-      <span className="px-3 py-1 rounded-full text-xs font-semibold bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200">
-        PRÊT À ROULER
+      <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200">
+        PRÊT
       </span>
     );
   };
 
   return (
-    <div className="w-full max-w-lg mx-auto p-4 space-y-4 pb-28">
-      <div className="bg-white border border-zinc-200 rounded-[2rem] p-6 shadow-xs relative overflow-hidden text-center">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 border border-zinc-100 rounded-full pointer-events-none"></div>
+    <div className="page-pad space-y-3 sm:space-y-4">
+      <div className="bg-white border border-zinc-200 rounded-[1.5rem] p-4 shadow-xs relative overflow-hidden text-center sm:rounded-[1.75rem] sm:p-5">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-40 h-40 border border-zinc-100 rounded-full pointer-events-none"></div>
 
-        <div className="flex items-center justify-between mb-4 relative z-10">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-            <Gauge className="w-4 h-4 text-emerald-600" /> Compteur GPS Van
+        <div className="flex items-center justify-between mb-2 relative z-10">
+          <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1">
+            <Gauge className="w-3.5 h-3.5 text-emerald-600" /> Compteur GPS Van
           </span>
           {statusBadge()}
         </div>
 
-        <div className="relative z-10 mb-1 flex items-center justify-center gap-1.5 text-[11px] font-semibold">
+        <div className="relative z-10 mb-0.5 flex flex-wrap items-center justify-center gap-x-1 gap-y-0.5 px-1 text-center text-[10px] font-semibold">
           {gpsReady ? (
             <span className="inline-flex items-center gap-1 text-emerald-700">
-              <Satellite className="w-3.5 h-3.5" />
+              <Satellite className="w-3 h-3" />
               GPS live{accuracyLabel ? ` · ${accuracyLabel}` : ''}
             </span>
           ) : gpsLocating ? (
             <span className="inline-flex items-center gap-1 text-amber-700">
-              <LoaderCircle className="w-3.5 h-3.5 animate-spin" />
-              Acquisition du signal GPS…
+              <LoaderCircle className="w-3 h-3 animate-spin" />
+              Acquisition GPS…
             </span>
           ) : (
             <span className="inline-flex items-center gap-1 text-red-600">
-              <AlertTriangle className="w-3.5 h-3.5" />
+              <AlertTriangle className="w-3 h-3" />
               {geoStatus.state === 'error' ? geoStatus.message : 'GPS indisponible'}
             </span>
           )}
         </div>
 
-        <div className="my-4 relative z-10">
-          <div className="text-6xl font-black text-zinc-900 tracking-tight font-mono tabular-nums">
+        <div className="my-2 relative z-10">
+          <div className="text-4xl font-black text-zinc-900 tracking-tight font-mono tabular-nums sm:text-5xl">
             {Math.round(currentSpeed)}
-            <span className="text-xl font-bold text-zinc-400 ml-1">km/h</span>
+            <span className="text-base font-bold text-zinc-400 ml-1">km/h</span>
           </div>
-          <p className="text-xs text-zinc-500 font-medium mt-1">
-            Vitesse instantanée · mise à jour GPS en direct
+          <p className="text-[10px] text-zinc-500 font-medium mt-0.5">
+            Vitesse instantanée
           </p>
         </div>
 
-        <div className="grid grid-cols-3 gap-2 mt-6 pt-4 border-t border-zinc-100 relative z-10">
-          <div className="bg-zinc-50 p-3 rounded-2xl border border-zinc-200">
-            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Distance</span>
-            <span className="text-lg font-black text-zinc-900 font-mono tabular-nums">{distance.value}</span>
-            <span className="text-[10px] text-zinc-500 font-medium ml-0.5">{distance.unit}</span>
+        <div className="grid grid-cols-3 gap-1.5 mt-3 pt-3 border-t border-zinc-100 relative z-10">
+          <div className="bg-zinc-50 px-2 py-2 rounded-xl border border-zinc-200">
+            <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider block">Distance</span>
+            <span className="text-sm font-black text-zinc-900 font-mono tabular-nums">{distance.value}</span>
+            <span className="text-[9px] text-zinc-500 font-medium ml-0.5">{distance.unit}</span>
           </div>
 
-          <div className="bg-zinc-50 p-3 rounded-2xl border border-zinc-200">
-            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Altitude</span>
-            <span className="text-lg font-black text-emerald-700 font-mono tabular-nums">
+          <div className="bg-zinc-50 px-2 py-2 rounded-xl border border-zinc-200">
+            <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider block">Altitude</span>
+            <span className="text-sm font-black text-emerald-700 font-mono tabular-nums">
               {currentAltitude != null ? currentAltitude : '—'}
             </span>
-            <span className="text-[10px] text-zinc-500 font-medium ml-0.5">m</span>
+            <span className="text-[9px] text-zinc-500 font-medium ml-0.5">m</span>
           </div>
 
-          <div className="bg-zinc-50 p-3 rounded-2xl border border-zinc-200">
-            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Durée</span>
-            <span className="text-sm font-black text-zinc-900 font-mono leading-6 tabular-nums">
+          <div className="bg-zinc-50 px-2 py-2 rounded-xl border border-zinc-200">
+            <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider block">Durée</span>
+            <span className="text-sm font-black text-zinc-900 font-mono leading-5 tabular-nums">
               {formatTime(elapsedSeconds)}
             </span>
           </div>
         </div>
 
-        <div className="mt-6 flex items-center justify-center gap-3 relative z-10">
+        <div className="mt-3 flex items-center justify-center gap-2 relative z-10">
           {!isRecording ? (
             <button
+              type="button"
               onClick={onStartRecording}
               disabled={!gpsReady}
-              className="w-full py-3.5 px-6 bg-zinc-900 text-white font-extrabold text-sm rounded-2xl shadow-md hover:bg-zinc-800 transition-all flex items-center justify-center gap-2 active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full min-h-12 py-3 px-4 bg-zinc-900 text-white font-extrabold text-xs rounded-xl shadow-md hover:bg-zinc-800 transition-all flex items-center justify-center gap-1.5 active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Play className="w-5 h-5 fill-current text-emerald-400" /> Démarrer la Trace GPS
+              <Play className="w-4 h-4 fill-current text-emerald-400" /> Démarrer la Trace GPS
             </button>
           ) : (
             <>
               <button
+                type="button"
                 onClick={onPauseRecording}
-                className={`flex-1 py-3 px-4 font-bold text-xs rounded-2xl border transition-all flex items-center justify-center gap-1.5 ${
+                className={`flex-1 min-h-12 py-3 px-3 font-bold text-[11px] rounded-xl border transition-all flex items-center justify-center gap-1.5 ${
                   isPaused
                     ? 'bg-amber-500 text-white border-amber-500'
                     : 'bg-zinc-100 text-zinc-700 border-zinc-200 hover:bg-zinc-200'
                 }`}
               >
-                {isPaused ? <Play className="w-4 h-4 fill-current" /> : <Pause className="w-4 h-4" />}
+                {isPaused ? <Play className="w-3.5 h-3.5 fill-current" /> : <Pause className="w-3.5 h-3.5" />}
                 {isPaused ? 'Reprendre' : 'Pause'}
               </button>
 
               <button
+                type="button"
                 onClick={handleFinishClick}
-                className="flex-1 py-3 px-4 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-2xl shadow-xs transition-all flex items-center justify-center gap-1.5"
+                className="flex-1 min-h-12 py-3 px-3 bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5"
               >
-                <Square className="w-4 h-4 fill-current" /> Sauvegarder
+                <Square className="w-3.5 h-3.5 fill-current" /> Sauvegarder
               </button>
             </>
           )}
@@ -277,11 +280,11 @@ export const GpsTracker: React.FC<GpsTrackerProps> = ({
       </div>
 
       <div className="bg-white border border-zinc-200 rounded-[2rem] p-5 shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="font-bold text-sm text-zinc-900 flex items-center gap-2">
-            <History className="w-4 h-4 text-emerald-600" /> Historique des Trajets
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-bold text-sm text-zinc-900 flex items-center gap-2 min-w-0">
+            <History className="w-4 h-4 text-emerald-600 shrink-0" /> Historique des Trajets
           </h3>
-          <span className="text-xs font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-zinc-200 px-3 py-0.5 rounded-full">
+          <span className="shrink-0 text-xs font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-zinc-200 px-3 py-0.5 rounded-full">
             {pastTracks.length} tracé(s)
           </span>
         </div>
@@ -295,28 +298,28 @@ export const GpsTracker: React.FC<GpsTrackerProps> = ({
             {pastTracks.map((track) => (
               <div
                 key={track.id}
-                className="p-3.5 rounded-2xl bg-zinc-50 border border-zinc-200 flex items-center justify-between"
+                className="p-3.5 rounded-2xl bg-zinc-50 border border-zinc-200 flex items-center justify-between gap-2"
               >
-                <div>
-                  <h4 className="font-bold text-xs text-zinc-900">{track.title}</h4>
-                  <div className="flex items-center gap-3 text-[11px] text-zinc-500 font-medium mt-1 font-mono">
+                <div className="min-w-0 flex-1">
+                  <h4 className="font-bold text-xs text-zinc-900 truncate">{track.title}</h4>
+                  <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-zinc-500 font-medium mt-1 font-mono">
                     <span>{track.date}</span>
                     <span>{formatDistanceKm(track.distanceKm).value} {formatDistanceKm(track.distanceKm).unit}</span>
                     <span>Max {Math.round(track.maxSpeedKmH || maxSpeedKmH(track.points))} km/h</span>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 shrink-0">
                   <button
                     onClick={() => downloadGpxFile(track)}
-                    className="p-1.5 text-zinc-500 hover:text-zinc-900 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-zinc-200"
+                    className="touch-target flex items-center justify-center min-h-11 min-w-11 text-zinc-500 hover:text-zinc-900 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-zinc-200"
                     title="Télécharger GPX"
                   >
                     <Download className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => onDeleteTrack(track.id)}
-                    className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                    className="touch-target flex items-center justify-center min-h-11 min-w-11 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
                     title="Supprimer la trace"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -355,17 +358,17 @@ export const GpsTracker: React.FC<GpsTrackerProps> = ({
                 </p>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowSaveModal(false)}
-                  className="px-3 py-2 text-xs font-bold text-zinc-600 hover:bg-zinc-100 rounded-xl"
+                  className="min-h-11 px-3 py-2 text-xs font-bold text-zinc-600 hover:bg-zinc-100 rounded-xl"
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-bold bg-zinc-900 text-white rounded-xl shadow-xs hover:bg-zinc-800"
+                  className="min-h-11 px-4 py-2 text-xs font-bold bg-zinc-900 text-white rounded-xl shadow-xs hover:bg-zinc-800"
                 >
                   Confirmer et Enregistrer
                 </button>
