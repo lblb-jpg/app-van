@@ -1,22 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
 import confetti from 'canvas-confetti';
 import {
   Receipt,
   Plus,
   ArrowRightLeft,
   CheckCircle2,
-  X,
-  Users,
   Wallet,
 } from 'lucide-react';
 import { Expense, ExpenseCategory, Friend, DebtSettlement } from '../types';
-import { StepFormModal } from './StepFormModal';
-
-const ADD_EXPENSE_STEPS = [
-  { id: 1, label: 'Montant', hint: 'Nom et prix' },
-  { id: 2, label: 'Partage', hint: 'Qui paie et partage' },
-] as const;
+import { SimpleFormModal } from './SimpleFormModal';
+import { ModalShell } from './ModalShell';
 
 interface TricountBudgetProps {
   expenses: Expense[];
@@ -155,7 +148,6 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
   const [splitWith, setSplitWith] = useState<string[]>(() => friends.map((f) => f.id));
   const [formError, setFormError] = useState('');
   const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null);
-  const [addStep, setAddStep] = useState(1);
 
   const openAddModal = () => {
     const ids = friends.map((f) => f.id);
@@ -165,7 +157,6 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
     setPaidBy(ids.includes(currentFriendId) ? currentFriendId : ids[0] || '');
     setSplitWith(ids.length ? ids : []);
     setFormError('');
-    setAddStep(1);
     setShowAddModal(true);
   };
 
@@ -179,59 +170,6 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
       return kept.length ? kept : ids;
     });
   }, [friends, currentFriendId, showAddModal]);
-
-  const modalOpen = showAddModal || Boolean(expenseToDelete);
-
-  useEffect(() => {
-    if (!modalOpen) return;
-
-    const html = document.documentElement;
-    const body = document.body;
-    const root = document.getElementById('root');
-    const scrollY = window.scrollY;
-    const previous = {
-      htmlOverflow: html.style.overflow,
-      bodyOverflow: body.style.overflow,
-      bodyPosition: body.style.position,
-      bodyTop: body.style.top,
-      bodyLeft: body.style.left,
-      bodyRight: body.style.right,
-      bodyWidth: body.style.width,
-      rootOverflow: root?.style.overflow ?? '',
-    };
-
-    html.style.overflow = 'hidden';
-    body.style.overflow = 'hidden';
-    body.style.position = 'fixed';
-    body.style.top = `-${scrollY}px`;
-    body.style.left = '0';
-    body.style.right = '0';
-    body.style.width = '100%';
-    if (root) root.style.overflow = 'hidden';
-
-    const preventBackgroundScroll = (event: TouchEvent | WheelEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest('[data-modal-scroll]')) return;
-      event.preventDefault();
-    };
-
-    document.addEventListener('touchmove', preventBackgroundScroll, { passive: false });
-    document.addEventListener('wheel', preventBackgroundScroll, { passive: false });
-
-    return () => {
-      document.removeEventListener('touchmove', preventBackgroundScroll);
-      document.removeEventListener('wheel', preventBackgroundScroll);
-      html.style.overflow = previous.htmlOverflow;
-      body.style.overflow = previous.bodyOverflow;
-      body.style.position = previous.bodyPosition;
-      body.style.top = previous.bodyTop;
-      body.style.left = previous.bodyLeft;
-      body.style.right = previous.bodyRight;
-      body.style.width = previous.bodyWidth;
-      if (root) root.style.overflow = previous.rootOverflow;
-      window.scrollTo(0, scrollY);
-    };
-  }, [modalOpen]);
 
   const friendIds = useMemo(() => friends.map((f) => f.id), [friends]);
   const friendById = useMemo(
@@ -273,20 +211,6 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
       .map((fromId) => ({ fromId, toId: paidBy, amount: share }));
   }, [hasDraftAmount, parsedAmount, splitWith, paidBy]);
 
-  const draftAfterSettlements = useMemo(() => {
-    if (!hasDraftAmount) return null as DebtSettlement[] | null;
-    const draft: Expense = {
-      id: '__draft__',
-      description: desc.trim() || 'Nouvelle dépense',
-      amount: Number(parsedAmount.toFixed(2)),
-      category,
-      date: new Date().toISOString().split('T')[0],
-      paidByFriendId: paidBy,
-      splitAmongFriendIds: splitWith,
-    };
-    return computeSettlements(computeBalances([...expenses, draft], friendIds));
-  }, [hasDraftAmount, parsedAmount, desc, category, paidBy, splitWith, expenses, friendIds]);
-
   const payerName = friendById[paidBy]?.name || 'Équipier';
 
   const handleCreateSubmit = (e: React.FormEvent) => {
@@ -321,15 +245,15 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
 
     setDesc('');
     setAmount('');
-    setAddStep(1);
     setShowAddModal(false);
   };
 
-  const canAdvanceExpenseStep = (step: number) => {
-    if (step === 1) return Boolean(desc.trim()) && Number.isFinite(parsedAmount) && parsedAmount > 0;
-    if (step === 2) return Boolean(paidBy) && splitWith.length > 0;
-    return true;
-  };
+  const canSubmitExpense =
+    Boolean(desc.trim()) &&
+    Number.isFinite(parsedAmount) &&
+    parsedAmount > 0 &&
+    Boolean(paidBy) &&
+    splitWith.length > 0;
 
   const toggleSplitFriend = (fId: string) => {
     if (splitWith.includes(fId)) {
@@ -678,265 +602,208 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
         )}
       </div>
 
-      {typeof document !== 'undefined' &&
-        createPortal(
-          <>
-            {expenseToDelete && (
-              <div
-                className="fixed inset-0 z-[100] bg-zinc-950/45 backdrop-blur-xs flex items-center justify-center p-4 overscroll-none"
-                onClick={() => setExpenseToDelete(null)}
-              >
-                <div
-                  data-modal-scroll
-                  className="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-2xl border border-zinc-200 animate-in fade-in zoom-in-95 space-y-4"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <div>
-                    <h3 className="font-extrabold text-base text-zinc-900">
-                      Supprimer cette dépense ?
-                    </h3>
-                    <p className="text-[12px] text-zinc-500 font-medium mt-1.5 leading-relaxed">
-                      « {expenseToDelete.description} » ({euro(expenseToDelete.amount)}) sera
-                      retirée du budget. Les soldes seront recalculés.
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setExpenseToDelete(null)}
-                      className="flex-1 px-3.5 py-3 text-xs font-bold text-zinc-600 hover:bg-zinc-100 rounded-2xl"
-                    >
-                      Annuler
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onDeleteExpense(expenseToDelete.id);
-                        setExpenseToDelete(null);
-                      }}
-                      className="flex-[1.3] px-4 py-3 text-xs font-bold bg-red-600 text-white rounded-2xl hover:bg-red-500"
-                    >
-                      Oui, supprimer
-                    </button>
-                  </div>
-                </div>
+      <ModalShell
+        isOpen={Boolean(expenseToDelete)}
+        onClose={() => setExpenseToDelete(null)}
+        maxWidth="sm"
+      >
+        <div className="space-y-4 p-5 sm:p-6">
+          <div>
+            <h3 className="font-extrabold text-base text-[#17352b]">Supprimer cette dépense ?</h3>
+            <p className="mt-1.5 text-[12px] font-medium leading-relaxed text-[#68756d]">
+              « {expenseToDelete?.description} » ({expenseToDelete ? euro(expenseToDelete.amount) : ''}) sera
+              retirée du budget. Les soldes seront recalculés.
+            </p>
+          </div>
+          <div className="flex gap-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+            <button
+              type="button"
+              onClick={() => setExpenseToDelete(null)}
+              className="flex-1 rounded-xl px-3.5 py-3 text-xs font-bold text-[#68756d] hover:bg-[#17352b]/5"
+            >
+              Annuler
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (expenseToDelete) onDeleteExpense(expenseToDelete.id);
+                setExpenseToDelete(null);
+              }}
+              className="flex-[1.3] rounded-xl bg-red-600 px-4 py-3 text-xs font-bold text-white hover:bg-red-500"
+            >
+              Oui, supprimer
+            </button>
+          </div>
+        </div>
+      </ModalShell>
+
+      <SimpleFormModal
+        isOpen={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        title="Nouvelle dépense"
+        subtitle="Nom, prix et partage en une fois"
+        icon={<Receipt className="h-5 w-5" />}
+        titleId="add-expense-title"
+        onSubmit={handleCreateSubmit}
+        footer={
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowAddModal(false)}
+              className="min-h-11 rounded-xl px-3.5 text-xs font-bold text-[#68756d] hover:bg-[#17352b]/5"
+            >
+              Annuler
+            </button>
+            <button
+              type="submit"
+              disabled={!canSubmitExpense}
+              className="ml-auto flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-[#17352b] px-4 text-xs font-extrabold text-white transition-all hover:bg-[#285849] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              Enregistrer
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <div className="space-y-3 rounded-xl bg-[#17352b] p-4 text-white">
+            <label className="block space-y-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-white/50">
+                Nom de la dépense *
+              </span>
+              <input
+                type="text"
+                required
+                placeholder="Courses Carrefour, plein essence…"
+                value={desc}
+                onChange={(e) => setDesc(e.target.value)}
+                className="w-full border-0 border-b border-white/20 bg-transparent pb-2 text-lg font-extrabold text-white placeholder:text-white/30 focus:border-[#eb6c32] focus:outline-hidden"
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-white/50">
+                Prix *
+              </span>
+              <div className="flex items-end gap-2">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  required
+                  placeholder="0,00"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value.replace(/[^\d.,]/g, ''))}
+                  className="w-full border-0 bg-transparent text-4xl font-black tracking-tight text-[#eb6c32] placeholder:text-white/20 focus:outline-hidden"
+                />
+                <span className="pb-1 text-xl font-bold text-white/50">€</span>
               </div>
-            )}
+            </label>
+          </div>
 
-            {showAddModal && (
-              <StepFormModal
-                isOpen={showAddModal}
-                onClose={() => {
-                  setAddStep(1);
-                  setShowAddModal(false);
-                }}
-                title="Nouvelle dépense"
-                subtitle="Le partage se met à jour en direct"
-                icon={<Receipt className="w-5 h-5" />}
-                iconBgClassName="bg-zinc-950"
-                steps={ADD_EXPENSE_STEPS}
-                currentStep={addStep}
-                onStepClick={setAddStep}
-                canAdvanceFromStep={canAdvanceExpenseStep}
-                onNext={() => setAddStep(2)}
-                onPrevious={() => setAddStep(1)}
-                onSubmit={handleCreateSubmit}
-                submitLabel="Enregistrer"
-                error={formError}
-                titleId="add-expense-title"
-                usePortal={false}
-                sheetClassName="bg-white"
+          {hasDraftAmount && (
+            <div className="space-y-2 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5">
+              <p className="text-[11px] font-semibold leading-snug text-emerald-900">
+                {payerName} avance {euro(Number(parsedAmount.toFixed(2)))} · {euro(sharePerPerson)} / pers.
+              </p>
+              {draftExpenseDebts.length > 0 && (
+                <div className="space-y-1">
+                  {draftExpenseDebts.map((debt) => (
+                    <p key={`${debt.fromId}-${debt.toId}`} className="text-[10px] font-bold text-emerald-800">
+                      {displayName(debt.fromId)} doit {euro(debt.amount)} à {displayName(debt.toId)}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div>
+            <label className="mb-2 block text-xs font-bold text-[#17352b]">Catégorie</label>
+            <div className="flex flex-wrap gap-1.5">
+              {CATEGORIES.map((item) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  onClick={() => setCategory(item.id)}
+                  className={`rounded-full px-3 py-1.5 text-[11px] font-bold transition-colors ${
+                    category === item.id
+                      ? 'bg-[#17352b] text-white'
+                      : 'bg-[#f5f1e7] text-[#68756d] ring-1 ring-[#17352b]/10'
+                  }`}
+                >
+                  {item.emoji} {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-xs font-bold text-[#17352b]">Payé par</label>
+            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+              {friends.map((f) => (
+                <button
+                  type="button"
+                  key={f.id}
+                  onClick={() => setPaidBy(f.id)}
+                  className={`flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition-all ${
+                    paidBy === f.id
+                      ? 'border-emerald-600 bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200'
+                      : 'border-[#17352b]/10 bg-[#f5f1e7] text-[#68756d]'
+                  }`}
+                >
+                  <img src={f.avatar} alt="" className="h-6 w-6 rounded-full object-cover" />
+                  {f.id === currentFriendId ? 'Moi' : f.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <label className="text-xs font-bold text-[#17352b]">Partagé entre</label>
+              <button
+                type="button"
+                onClick={() => setSplitWith(friends.map((f) => f.id))}
+                className="text-[10px] font-bold text-emerald-700 hover:underline"
               >
-                {addStep === 1 && (
-                  <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-                    <div className="rounded-[1.35rem] bg-zinc-950 text-white p-4 space-y-3">
-                      <label className="block space-y-1.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                          Nom de la dépense *
-                        </span>
-                        <input
-                          type="text"
-                          autoFocus
-                          required
-                          placeholder="Courses Carrefour, plein essence…"
-                          value={desc}
-                          onChange={(e) => setDesc(e.target.value)}
-                          className="w-full bg-transparent text-lg font-extrabold text-white placeholder:text-zinc-600 border-0 border-b border-zinc-700 focus:border-emerald-400 focus:outline-hidden pb-2"
-                        />
-                      </label>
-                      <label className="block space-y-1.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                          Prix *
-                        </span>
-                        <div className="flex items-end gap-2">
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            required
-                            placeholder="0,00"
-                            value={amount}
-                            onChange={(e) => setAmount(e.target.value.replace(/[^\d.,]/g, ''))}
-                            className="w-full bg-transparent text-4xl font-black tracking-tight text-emerald-400 placeholder:text-zinc-700 border-0 focus:outline-hidden"
-                          />
-                          <span className="pb-1 text-xl font-bold text-zinc-500">€</span>
-                        </div>
-                      </label>
-                    </div>
-                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 px-3.5 py-3">
-                      <p className="text-[11px] font-semibold leading-relaxed text-emerald-900">
-                        À l’étape suivante, tu choisis qui a payé et comment partager entre l’équipage.
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {addStep === 2 && (
-                  <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-                    <div className="rounded-2xl border border-zinc-200 bg-zinc-950 p-4 text-white">
-                      <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-emerald-300">Récapitulatif</p>
-                      <p className="mt-1 truncate text-base font-extrabold">{desc || 'Sans nom'}</p>
-                      <p className="mt-0.5 font-mono text-lg font-black text-emerald-400">
-                        {hasDraftAmount ? euro(Number(parsedAmount.toFixed(2))) : '—'}
-                      </p>
-                    </div>
-
-                    {hasDraftAmount && (
-                      <div className="rounded-[1.35rem] border border-emerald-200 bg-emerald-50/70 p-3.5 space-y-3">
-                        <div>
-                          <p className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-800">
-                            Pour cette dépense
-                          </p>
-                          <p className="mt-0.5 text-[11px] font-semibold text-emerald-900/70 leading-snug">
-                            {payerName} avance {euro(Number(parsedAmount.toFixed(2)))} · chacun
-                            doit {euro(sharePerPerson)}
-                          </p>
-                        </div>
-                        <div className="space-y-1.5">
-                          {splitWith.map((id) => {
-                            const isPayer = id === paidBy;
-                            return (
-                              <div
-                                key={id}
-                                className="flex items-center justify-between gap-2 rounded-xl bg-white/80 px-2.5 py-2 ring-1 ring-emerald-100"
-                              >
-                                <div className="flex min-w-0 items-center gap-2">
-                                  <img src={friendById[id]?.avatar} alt="" className="h-6 w-6 shrink-0 rounded-full object-cover" />
-                                  <span className="truncate text-[11px] font-bold text-zinc-800">{displayName(id)}</span>
-                                </div>
-                                <span className="shrink-0 text-[10px] font-extrabold text-zinc-600">
-                                  {isPayer ? `avance · part ${euro(sharePerPerson)}` : `doit ${euro(sharePerPerson)}`}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        {draftExpenseDebts.length > 0 ? (
-                          <div className="space-y-1.5 border-t border-emerald-200/80 pt-2.5">
-                            <p className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-800">
-                              Qui rembourse {displayName(paidBy)}
-                            </p>
-                            {draftExpenseDebts.map((debt) => (
-                              <div key={`${debt.fromId}-${debt.toId}`} className="flex items-center justify-between gap-2 rounded-xl bg-[#17352b] px-2.5 py-2 text-white">
-                                <p className="min-w-0 truncate text-[11px] font-bold">
-                                  {displayName(debt.fromId)}
-                                  <span className="mx-1 font-semibold text-white/50">→</span>
-                                  {displayName(debt.toId)}
-                                </p>
-                                <span className="shrink-0 font-mono text-xs font-black text-emerald-300 tabular-nums">{euro(debt.amount)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-[11px] font-semibold text-emerald-800">
-                            {displayName(paidBy)} paie pour soi uniquement — aucune dette créée.
-                          </p>
-                        )}
-                      </div>
+                Tout le monde
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {friends.map((f) => {
+                const isIncluded = splitWith.includes(f.id);
+                return (
+                  <button
+                    type="button"
+                    key={f.id}
+                    onClick={() => toggleSplitFriend(f.id)}
+                    className={`flex items-center justify-between rounded-xl border p-2.5 text-xs font-semibold transition-colors ${
+                      isIncluded
+                        ? 'border-[#17352b] bg-[#17352b] text-white'
+                        : 'border-[#17352b]/10 bg-[#f5f1e7] text-[#68756d]'
+                    }`}
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <img src={f.avatar} alt="" className="h-5 w-5 shrink-0 rounded-full object-cover" />
+                      <span className="truncate">{f.id === currentFriendId ? 'Moi' : f.name}</span>
+                    </span>
+                    {isIncluded && sharePerPerson > 0 && (
+                      <span className="shrink-0 font-mono text-[9px] font-black text-emerald-300">
+                        {euro(sharePerPerson)}
+                      </span>
                     )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-                    <div>
-                      <label className="block text-xs font-bold text-zinc-700 mb-2">Catégorie</label>
-                      <div className="flex flex-wrap gap-1.5">
-                        {CATEGORIES.map((item) => (
-                          <button
-                            type="button"
-                            key={item.id}
-                            onClick={() => setCategory(item.id)}
-                            className={`px-3 py-1.5 rounded-full text-[11px] font-bold transition-colors ${
-                              category === item.id ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200'
-                            }`}
-                          >
-                            {item.emoji} {item.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-zinc-700 mb-2">Payé par</label>
-                      <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-                        {friends.map((f) => (
-                          <button
-                            type="button"
-                            key={f.id}
-                            onClick={() => setPaidBy(f.id)}
-                            className={`shrink-0 px-3 py-2 rounded-2xl text-xs font-bold flex items-center gap-2 border transition-all ${
-                              paidBy === f.id
-                                ? 'border-emerald-600 bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200'
-                                : 'border-zinc-200 bg-zinc-50 text-zinc-700'
-                            }`}
-                          >
-                            <img src={f.avatar} alt="" className="w-6 h-6 rounded-full object-cover" />
-                            {f.id === currentFriendId ? 'Moi' : f.name}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <label className="text-xs font-bold text-zinc-700">Partagé entre</label>
-                        <button
-                          type="button"
-                          onClick={() => setSplitWith(friends.map((f) => f.id))}
-                          className="text-[10px] font-bold text-emerald-700 hover:underline"
-                        >
-                          Tout le monde
-                        </button>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        {friends.map((f) => {
-                          const isIncluded = splitWith.includes(f.id);
-                          return (
-                            <button
-                              type="button"
-                              key={f.id}
-                              onClick={() => toggleSplitFriend(f.id)}
-                              className={`p-2.5 rounded-xl text-xs font-semibold flex items-center justify-between border transition-colors ${
-                                isIncluded ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-100 text-zinc-500 border-zinc-200'
-                              }`}
-                            >
-                              <span className="flex items-center gap-1.5 min-w-0">
-                                <img src={f.avatar} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" />
-                                <span className="truncate">{f.id === currentFriendId ? 'Moi' : f.name}</span>
-                              </span>
-                              {isIncluded && (
-                                <span className="shrink-0 text-[9px] font-black text-emerald-300 font-mono">
-                                  {sharePerPerson > 0 ? euro(sharePerPerson) : <CheckCircle2 className="w-3.5 h-3.5" />}
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </StepFormModal>
-            )}
-          </>,
-          document.body
-        )}
+          {formError && (
+            <p className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
+              {formError}
+            </p>
+          )}
+        </div>
+      </SimpleFormModal>
     </div>
   );
 };

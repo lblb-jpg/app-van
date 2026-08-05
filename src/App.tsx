@@ -48,7 +48,7 @@ import {
   SYNC_LIVE_LOCATION_POLL_MS,
   SYNC_LIVE_LOCATION_PUSH_MS,
 } from './services/syncConfig';
-import { Navigation } from './components/Navigation';
+import { Navigation, VanBottomNav } from './components/Navigation';
 import { MapView } from './components/MapView';
 import { GpsTracker } from './components/GpsTracker';
 import { WaypointsManager } from './components/WaypointsManager';
@@ -103,11 +103,12 @@ function readStoredTab(): TabType {
 }
 
 export default function App() {
+  const mainRef = useRef<HTMLElement>(null);
   const [activeTab, setActiveTabState] = useState<TabType>(() => readStoredTab());
 
   const setActiveTab = (tab: TabType) => {
     setActiveTabState(tab);
-    window.scrollTo(0, 0);
+    mainRef.current?.scrollTo(0, 0);
     try {
       localStorage.setItem(ACTIVE_TAB_KEY, tab);
     } catch {
@@ -996,9 +997,7 @@ export default function App() {
   };
 
   return (
-    <div className={`app-shell flex flex-col text-zinc-900 ${
-      activeTab === 'radio' ? 'h-dvh max-h-dvh overflow-hidden' : 'min-h-dvh'
-    }`}>
+    <div className="app-shell flex h-dvh max-h-dvh flex-col overflow-hidden text-zinc-900">
       <Navigation
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -1038,10 +1037,13 @@ export default function App() {
         </button>
       )}
 
-      <main className={`page-surface flex-1 w-full ${
-        activeTab === 'radio' ? 'min-h-0 overflow-hidden' : ''
-      }`}>
-        {activeTab === 'map' && (
+      <main
+        ref={mainRef}
+        className={`page-surface min-h-0 flex-1 w-full ${
+          activeTab === 'radio' || activeTab === 'map' ? 'overflow-hidden' : 'overflow-y-auto'
+        }`}
+      >
+        <div className={activeTab === 'map' ? 'h-full' : 'hidden'} aria-hidden={activeTab !== 'map'}>
           <MapView
             pois={pois}
             friends={friends}
@@ -1052,10 +1054,11 @@ export default function App() {
             waypoints={waypoints}
             userLocation={userLocation}
             focusLocation={mapFocus}
+            mapVisible={activeTab === 'map'}
             onAddPoi={handleAddPoi}
             onAddPhoto={handleAddPhoto}
           />
-        )}
+        </div>
 
         {activeTab === 'sleep' && (
           <VanSleepSearch
@@ -1150,6 +1153,12 @@ export default function App() {
           />
         )}
       </main>
+
+      <VanBottomNav
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        isGpsRecording={isGpsRecording}
+      />
 
       <AuthModal
         isOpen={isAuthModalOpen}

@@ -5,16 +5,14 @@ import {
   MapPin,
   ChevronUp,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   Trash2,
   Navigation,
   X,
   Camera,
   ImagePlus,
-  Check,
 } from 'lucide-react';
 import { Waypoint } from '../types';
+import { StepFormModal } from './StepFormModal';
 
 const withoutSource = (notes?: string) =>
   notes
@@ -432,325 +430,195 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
         )}
       </div>
 
-      {/* Add Waypoint Modal — 3 étapes */}
-      {showAddModal && (
-        <div
-          className="fixed inset-0 z-[100] bg-zinc-950/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 overscroll-none"
-          onClick={closeAddModal}
-        >
-          <div
-            className="flex w-full max-w-md max-h-[92dvh] flex-col overflow-hidden bg-[#fffdf8] rounded-t-[1.75rem] sm:rounded-[2rem] shadow-2xl border border-zinc-200 animate-in fade-in slide-in-from-bottom-4 sm:zoom-in-95"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="add-waypoint-title"
-          >
-            <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-zinc-300/80 sm:hidden" />
+      <StepFormModal
+        isOpen={showAddModal}
+        onClose={closeAddModal}
+        title="Ajouter une étape"
+        icon={<Milestone className="h-5 w-5 text-emerald-300" />}
+        steps={ADD_STEPS}
+        currentStep={addStep}
+        onStepClick={setAddStep}
+        canAdvanceFromStep={canAdvanceFromStep}
+        onNext={goToNextStep}
+        onPrevious={goToPreviousStep}
+        onSubmit={handleCreateSubmit}
+        submitLabel="Ajouter l'étape"
+        titleId="add-waypoint-title"
+      >
+        {addStep === 1 && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-bold text-[#17352b]">Nom de l'étape *</span>
+              <input
+                type="text"
+                required
+                placeholder="ex: Bivouac Lac du Mont-Cenis"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="w-full rounded-xl border border-[#17352b]/12 bg-white px-3.5 py-3 text-sm font-semibold text-[#17352b] placeholder:text-[#68756d]/50 focus:outline-hidden focus:ring-2 focus:ring-[#17352b]/20"
+              />
+            </label>
 
-            {/* Header fixe */}
-            <div className="shrink-0 border-b border-zinc-100 px-5 pb-4 pt-4 sm:px-6 sm:pt-5">
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-bold text-[#17352b]">Commune / Ville *</span>
+              <input
+                type="text"
+                required
+                placeholder="ex: Lanslebourg-Mont-Cenis"
+                value={locationName}
+                onChange={(e) => setLocationName(e.target.value)}
+                className="w-full rounded-xl border border-[#17352b]/12 bg-white px-3.5 py-3 text-sm font-semibold text-[#17352b] placeholder:text-[#68756d]/50 focus:outline-hidden focus:ring-2 focus:ring-[#17352b]/20"
+              />
+            </label>
+
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-bold text-[#17352b]">Type de spot van</span>
+              <input
+                type="text"
+                placeholder="Wild spot, aire naturelle, camping…"
+                value={vanSpotType}
+                onChange={(e) => setVanSpotType(e.target.value)}
+                className="w-full rounded-xl border border-[#17352b]/12 bg-white px-3.5 py-3 text-sm font-medium text-[#17352b] placeholder:text-[#68756d]/50 focus:outline-hidden focus:ring-2 focus:ring-[#17352b]/20"
+              />
+            </label>
+          </div>
+        )}
+
+        {addStep === 2 && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+            <div className="rounded-xl border border-[#17352b]/10 bg-[#17352b] p-4 text-white">
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-emerald-300">Récapitulatif</p>
+              <p className="mt-1 truncate text-base font-extrabold">{title || 'Sans titre'}</p>
+              <p className="mt-0.5 truncate text-[11px] font-medium text-white/70">{locationName || 'Lieu non renseigné'}</p>
+              {vanSpotType && (
+                <span className="mt-2 inline-block rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-bold text-emerald-200">
+                  🚐 {vanSpotType}
+                </span>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-[#17352b]/10 bg-[#f5f1e7] p-3.5">
               <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-zinc-950 text-white shadow-md">
-                    <Milestone className="h-5 w-5 text-emerald-400" />
-                  </div>
-                  <div className="min-w-0">
-                    <h3 id="add-waypoint-title" className="truncate font-extrabold text-base text-zinc-900">
-                      Ajouter une étape
-                    </h3>
-                    <p className="mt-0.5 text-[11px] font-medium text-zinc-500">
-                      Étape {addStep}/{ADD_STEPS.length} · {ADD_STEPS[addStep - 1].hint}
-                    </p>
-                  </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold text-[#17352b]">Position GPS *</p>
+                  <p className="mt-1 font-mono text-[12px] font-semibold text-[#68756d]">
+                    {parseFloat(lat).toFixed(5)}, {parseFloat(lng).toFixed(5)}
+                  </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={closeAddModal}
-                  className="touch-target flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-                  aria-label="Fermer"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              {/* Indicateur d'étapes */}
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                {ADD_STEPS.map((step) => {
-                  const isDone = addStep > step.id;
-                  const isCurrent = addStep === step.id;
-                  return (
-                    <button
-                      key={step.id}
-                      type="button"
-                      onClick={() => {
-                        if (step.id < addStep) setAddStep(step.id);
-                      }}
-                      disabled={step.id > addStep}
-                      className={`rounded-2xl px-2 py-2 text-left transition-all ${
-                        isCurrent
-                          ? 'bg-zinc-950 text-white shadow-sm'
-                          : isDone
-                            ? 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200'
-                            : 'bg-zinc-100 text-zinc-400'
-                      } ${step.id < addStep ? 'cursor-pointer hover:bg-emerald-100/80' : 'cursor-default'}`}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full text-[10px] font-black ${
-                          isCurrent ? 'bg-emerald-400 text-zinc-950' : isDone ? 'bg-emerald-500 text-white' : 'bg-zinc-200 text-zinc-500'
-                        }`}>
-                          {isDone ? <Check className="h-3 w-3" /> : step.id}
-                        </span>
-                        <span className="min-w-0 truncate text-[10px] font-extrabold uppercase tracking-wide">
-                          {step.label}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-zinc-100">
-                <div
-                  className="h-full rounded-full bg-emerald-500 transition-all duration-300"
-                  style={{ width: `${(addStep / ADD_STEPS.length) * 100}%` }}
-                />
+                <MapPin className="h-5 w-5 shrink-0 text-emerald-600" />
               </div>
             </div>
 
-            {/* Contenu scrollable */}
-            <form onSubmit={handleCreateSubmit} className="flex min-h-0 flex-1 flex-col">
-              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
-                {addStep === 1 && (
-                  <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-                    <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 px-3.5 py-3">
-                      <p className="text-[11px] font-semibold leading-relaxed text-emerald-900">
-                        Commence par le nom et la commune — le reste peut attendre l’étape suivante.
-                      </p>
-                    </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block space-y-1.5">
+                <span className="text-[11px] font-bold text-[#17352b]">Latitude</span>
+                <input
+                  type="number"
+                  step="any"
+                  value={lat}
+                  onChange={(e) => setLat(e.target.value)}
+                  className="w-full rounded-xl border border-[#17352b]/12 bg-white px-3.5 py-3 font-mono text-sm text-[#17352b] focus:outline-hidden focus:ring-2 focus:ring-[#17352b]/20"
+                />
+              </label>
+              <label className="block space-y-1.5">
+                <span className="text-[11px] font-bold text-[#17352b]">Longitude</span>
+                <input
+                  type="number"
+                  step="any"
+                  value={lng}
+                  onChange={(e) => setLng(e.target.value)}
+                  className="w-full rounded-xl border border-[#17352b]/12 bg-white px-3.5 py-3 font-mono text-sm text-[#17352b] focus:outline-hidden focus:ring-2 focus:ring-[#17352b]/20"
+                />
+              </label>
+            </div>
 
-                    <label className="block space-y-1.5">
-                      <span className="text-[11px] font-bold text-zinc-800">Nom de l’étape *</span>
-                      <input
-                        type="text"
-                        autoFocus
-                        required
-                        placeholder="ex: Bivouac Lac du Mont-Cenis"
-                        value={title}
-                        onChange={(e) => setTitle(e.target.value)}
-                        className="w-full rounded-2xl border border-zinc-200 bg-white px-3.5 py-3 text-sm font-semibold text-zinc-900 placeholder:text-zinc-400 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-bold text-[#17352b]">Notes / remarques</span>
+              <textarea
+                rows={3}
+                placeholder="Heure limite d'arrivée, fontaine d'eau, calme…"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className="w-full resize-none rounded-xl border border-[#17352b]/12 bg-white px-3.5 py-3 text-sm text-[#17352b] placeholder:text-[#68756d]/50 focus:outline-hidden focus:ring-2 focus:ring-[#17352b]/20"
+              />
+            </label>
+
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-[11px] font-bold text-[#17352b]">Photos du spot</span>
+                <span className="text-[10px] font-bold text-[#68756d]">
+                  {photos.length}/{MAX_WAYPOINT_PHOTOS}
+                </span>
+              </div>
+              {photos.length > 0 && (
+                <div className="mb-2 grid grid-cols-3 gap-2">
+                  {photos.map((src, index) => (
+                    <div key={`new-photo-${index}`} className="relative">
+                      <img
+                        src={src}
+                        alt={`Photo ${index + 1}`}
+                        className="h-24 w-full rounded-xl border border-[#17352b]/10 object-cover"
                       />
-                    </label>
-
-                    <label className="block space-y-1.5">
-                      <span className="text-[11px] font-bold text-zinc-800">Commune / Ville *</span>
-                      <input
-                        type="text"
-                        required
-                        placeholder="ex: Lanslebourg-Mont-Cenis"
-                        value={locationName}
-                        onChange={(e) => setLocationName(e.target.value)}
-                        className="w-full rounded-2xl border border-zinc-200 bg-white px-3.5 py-3 text-sm font-semibold text-zinc-900 placeholder:text-zinc-400 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                      />
-                    </label>
-
-                    <label className="block space-y-1.5">
-                      <span className="text-[11px] font-bold text-zinc-800">Type de spot van</span>
-                      <input
-                        type="text"
-                        placeholder="Wild spot, aire naturelle, camping…"
-                        value={vanSpotType}
-                        onChange={(e) => setVanSpotType(e.target.value)}
-                        className="w-full rounded-2xl border border-zinc-200 bg-white px-3.5 py-3 text-sm font-medium text-zinc-900 placeholder:text-zinc-400 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                      />
-                    </label>
-                  </div>
-                )}
-
-                {addStep === 2 && (
-                  <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-                    <div className="rounded-2xl border border-zinc-200 bg-zinc-950 p-4 text-white">
-                      <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-emerald-300">Récapitulatif</p>
-                      <p className="mt-1 truncate text-base font-extrabold">{title || 'Sans titre'}</p>
-                      <p className="mt-0.5 truncate text-[11px] font-medium text-zinc-300">{locationName || 'Lieu non renseigné'}</p>
-                      {vanSpotType && (
-                        <span className="mt-2 inline-block rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-bold text-emerald-200">
-                          🚐 {vanSpotType}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-xs">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-[11px] font-bold text-zinc-800">Position GPS *</p>
-                          <p className="mt-1 font-mono text-[12px] font-semibold text-zinc-600">
-                            {parseFloat(lat).toFixed(5)}, {parseFloat(lng).toFixed(5)}
-                          </p>
-                        </div>
-                        <MapPin className="h-5 w-5 shrink-0 text-emerald-600" />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3">
-                      <label className="block space-y-1.5">
-                        <span className="text-[11px] font-bold text-zinc-800">Latitude</span>
-                        <input
-                          type="number"
-                          step="any"
-                          value={lat}
-                          onChange={(e) => setLat(e.target.value)}
-                          className="w-full rounded-2xl border border-zinc-200 bg-white px-3.5 py-3 font-mono text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                        />
-                      </label>
-                      <label className="block space-y-1.5">
-                        <span className="text-[11px] font-bold text-zinc-800">Longitude</span>
-                        <input
-                          type="number"
-                          step="any"
-                          value={lng}
-                          onChange={(e) => setLng(e.target.value)}
-                          className="w-full rounded-2xl border border-zinc-200 bg-white px-3.5 py-3 font-mono text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                        />
-                      </label>
-                    </div>
-
-                    <label className="block space-y-1.5">
-                      <span className="text-[11px] font-bold text-zinc-800">Notes / remarques</span>
-                      <textarea
-                        rows={3}
-                        placeholder="Heure limite d’arrivée, fontaine d’eau, calme…"
-                        value={notes}
-                        onChange={(e) => setNotes(e.target.value)}
-                        className="w-full resize-none rounded-2xl border border-zinc-200 bg-white px-3.5 py-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
-                      />
-                    </label>
-
-                    <div>
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <span className="text-[11px] font-bold text-zinc-800">
-                          Photos du spot
-                        </span>
-                        <span className="text-[10px] font-bold text-zinc-400">
-                          {photos.length}/{MAX_WAYPOINT_PHOTOS}
-                        </span>
-                      </div>
-                      {photos.length > 0 && (
-                        <div className="mb-2 grid grid-cols-3 gap-2">
-                          {photos.map((src, index) => (
-                            <div key={`new-photo-${index}`} className="relative">
-                              <img
-                                src={src}
-                                alt={`Photo ${index + 1}`}
-                                className="h-24 w-full rounded-xl border border-zinc-200 object-cover"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setPhotos((prev) => prev.filter((_, i) => i !== index))}
-                                className="absolute top-1.5 right-1.5 rounded-full bg-zinc-950/75 p-1 text-white"
-                                title="Retirer la photo"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
                       <button
                         type="button"
-                        onClick={() => photoInputRef.current?.click()}
-                        disabled={photos.length >= MAX_WAYPOINT_PHOTOS}
-                        className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-zinc-300 bg-white px-3.5 py-3 text-xs font-bold text-zinc-600 transition-colors hover:border-emerald-500 hover:bg-emerald-50/60 hover:text-emerald-800 disabled:pointer-events-none disabled:opacity-40"
+                        onClick={() => setPhotos((prev) => prev.filter((_, i) => i !== index))}
+                        className="absolute top-1.5 right-1.5 rounded-full bg-[#17352b]/75 p-1 text-white"
+                        title="Retirer la photo"
                       >
-                        {photos.length ? <ImagePlus className="h-4 w-4" /> : <Camera className="h-4 w-4" />}
-                        {photos.length ? 'Ajouter d’autres photos' : 'Importer des photos'}
+                        <X className="h-3 w-3" />
                       </button>
-                      <input
-                        ref={photoInputRef}
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        className="hidden"
-                        onChange={(e) => void handlePhotosSelected(e)}
-                      />
-                      {photoError ? (
-                        <p className="mt-1.5 text-[10px] font-semibold text-amber-700">{photoError}</p>
-                      ) : (
-                        <p className="mt-1.5 text-[10px] font-medium text-zinc-400">
-                          JPG / PNG, jusqu’à {MAX_WAYPOINT_PHOTOS} photos
-                        </p>
-                      )}
                     </div>
-
-                    <div>
-                      <span className="mb-2 block text-[11px] font-bold text-zinc-800">Commodités du spot</span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {AMENITY_OPTIONS.map((item) => (
-                          <button
-                            type="button"
-                            key={item.id}
-                            onClick={() => toggleAmenity(item.id)}
-                            className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors ${
-                              amenities.includes(item.id)
-                                ? 'bg-zinc-950 text-white shadow-xs'
-                                : 'bg-zinc-100 text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-200/70'
-                            }`}
-                          >
-                            {item.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Footer fixe */}
-              <div className="shrink-0 border-t border-zinc-100 bg-[#fffdf8]/95 px-5 py-4 backdrop-blur-sm sm:px-6">
-                <div className="flex items-center gap-2">
-                  {addStep > 1 ? (
-                    <button
-                      type="button"
-                      onClick={goToPreviousStep}
-                      className="flex min-h-11 items-center justify-center gap-1 rounded-2xl px-3.5 text-xs font-bold text-zinc-600 hover:bg-zinc-100"
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                      Retour
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={closeAddModal}
-                      className="min-h-11 rounded-2xl px-3.5 text-xs font-bold text-zinc-600 hover:bg-zinc-100"
-                    >
-                      Annuler
-                    </button>
-                  )}
-
-                  {addStep < ADD_STEPS.length ? (
-                    <button
-                      type="button"
-                      disabled={!canAdvanceFromStep(addStep)}
-                      onClick={goToNextStep}
-                      className="ml-auto flex min-h-11 flex-1 items-center justify-center gap-1 rounded-2xl bg-zinc-950 px-4 text-xs font-extrabold text-white shadow-sm transition-all hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Continuer
-                      <ChevronRight className="h-4 w-4" />
-                    </button>
-                  ) : (
-                    <button
-                      type="submit"
-                      disabled={!canAdvanceFromStep(1)}
-                      className="ml-auto flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-2xl bg-emerald-600 px-4 text-xs font-extrabold text-white shadow-sm transition-all hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      <Check className="h-4 w-4" />
-                      Ajouter l’étape
-                    </button>
-                  )}
+                  ))}
                 </div>
+              )}
+              <button
+                type="button"
+                onClick={() => photoInputRef.current?.click()}
+                disabled={photos.length >= MAX_WAYPOINT_PHOTOS}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#17352b]/20 bg-white px-3.5 py-3 text-xs font-bold text-[#68756d] transition-colors hover:border-emerald-500 hover:bg-emerald-50/60 hover:text-emerald-800 disabled:pointer-events-none disabled:opacity-40"
+              >
+                {photos.length ? <ImagePlus className="h-4 w-4" /> : <Camera className="h-4 w-4" />}
+                {photos.length ? 'Ajouter d\u2019autres photos' : 'Importer des photos'}
+              </button>
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => void handlePhotosSelected(e)}
+              />
+              {photoError ? (
+                <p className="mt-1.5 text-[10px] font-semibold text-amber-700">{photoError}</p>
+              ) : (
+                <p className="mt-1.5 text-[10px] font-medium text-[#68756d]">
+                  JPG / PNG, jusqu'à {MAX_WAYPOINT_PHOTOS} photos
+                </p>
+              )}
+            </div>
+
+            <div>
+              <span className="mb-2 block text-[11px] font-bold text-[#17352b]">Commodités du spot</span>
+              <div className="flex flex-wrap gap-1.5">
+                {AMENITY_OPTIONS.map((item) => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    onClick={() => toggleAmenity(item.id)}
+                    className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors ${
+                      amenities.includes(item.id)
+                        ? 'bg-[#17352b] text-white'
+                        : 'bg-[#f5f1e7] text-[#68756d] ring-1 ring-[#17352b]/10 hover:bg-[#ebe4d4]'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
               </div>
-            </form>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </StepFormModal>
     </div>
   );
 };

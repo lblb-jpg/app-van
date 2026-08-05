@@ -33,6 +33,7 @@ interface MapViewProps {
     label?: string;
     emoji?: string;
   } | null;
+  mapVisible?: boolean;
   onAddPoi: (newPoi: Omit<Poi, 'id' | 'createdAt'>) => void;
   onAddPhoto: (newPhoto: Omit<TripPhoto, 'id'>) => void;
 }
@@ -79,6 +80,7 @@ export const MapView: React.FC<MapViewProps> = ({
   waypoints,
   userLocation,
   focusLocation,
+  mapVisible = true,
   onAddPoi,
   onAddPhoto
 }) => {
@@ -164,18 +166,32 @@ export const MapView: React.FC<MapViewProps> = ({
     tileLayerRef.current = newTileLayer;
   }, [activeTile]);
 
-  // Fly to a waypoint selected from the itinerary.
+  // Fly to an exact spot selected from sleep search or the itinerary.
   useEffect(() => {
-    if (!mapRef.current || !focusLocation) return;
-    mapRef.current.flyTo([focusLocation.lat, focusLocation.lng], 14, { duration: 0.9 });
-  }, [focusLocation]);
+    if (!mapRef.current || !focusLocation || !mapVisible) return;
 
-  // Center the map once when GPS becomes available.
-  useEffect(() => {
-    if (!mapRef.current || !userLocation || hasFlownToUserRef.current) return;
+    const map = mapRef.current;
+    const { lat, lng } = focusLocation;
     hasFlownToUserRef.current = true;
+
+    const centerOnSpot = () => {
+      map.invalidateSize({ animate: false });
+      map.flyTo([lat, lng], 17, { duration: 0.85 });
+    };
+
+    centerOnSpot();
+    const retryTimer = window.setTimeout(centerOnSpot, 180);
+
+    return () => window.clearTimeout(retryTimer);
+  }, [mapVisible, focusLocation?.requestId, focusLocation?.lat, focusLocation?.lng]);
+
+  // Center the map once when GPS becomes available (unless a spot is already focused).
+  useEffect(() => {
+    if (!mapRef.current || !userLocation || hasFlownToUserRef.current || focusLocation || !mapVisible) return;
+    hasFlownToUserRef.current = true;
+    mapRef.current.invalidateSize({ animate: false });
     mapRef.current.flyTo([userLocation.lat, userLocation.lng], 14, { duration: 1.1 });
-  }, [userLocation]);
+  }, [userLocation, focusLocation, mapVisible]);
 
   // Update Markers, Polylines and Layers
   useEffect(() => {
@@ -389,8 +405,12 @@ export const MapView: React.FC<MapViewProps> = ({
         marker.bindTooltip(escapeHtml(focusLocation.label), {
           direction: 'top',
           offset: [0, -24],
+          permanent: true,
+          opacity: 0.96,
         });
       }
+
+      marker.openTooltip();
     }
 
   }, [pois, friends, pastTracks, activeTrackPoints, userLocation, photos, waypoints, focusLocation, selectedPoiTypeFilter, selectedFriendFilter]);
@@ -523,7 +543,7 @@ export const MapView: React.FC<MapViewProps> = ({
   const liveCrewCount = friends.filter((f) => f.liveLat != null && f.liveLng != null).length;
 
   return (
-    <div className="relative mt-1 w-full h-[calc(100dvh-7.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-[420px] bg-[#dfe6dc] overflow-hidden sm:mt-2 sm:mx-auto sm:h-[calc(100dvh-116px)] sm:min-h-[560px] sm:w-[calc(100%-2rem)] sm:max-w-6xl sm:rounded-[2rem] sm:border sm:border-[#17352b]/10 sm:shadow-[0_24px_60px_rgba(23,53,43,.14)]">
+    <div className="relative mt-1 h-full w-full min-h-[420px] overflow-hidden bg-[#dfe6dc] sm:mt-2 sm:mx-auto sm:min-h-[560px] sm:w-[calc(100%-2rem)] sm:max-w-6xl sm:rounded-[2rem] sm:border sm:border-[#17352b]/10 sm:shadow-[0_24px_60px_rgba(23,53,43,.14)]">
       {/* Leaflet Container */}
       <div ref={mapContainerRef} className="w-full h-full z-0" />
 
@@ -696,7 +716,6 @@ export const MapView: React.FC<MapViewProps> = ({
                 <span className="text-[11px] font-bold text-[#17352b]">Nom du spot *</span>
                 <input
                   type="text"
-                  autoFocus
                   required
                   placeholder="Bivouac lac, fontaine, belvédère…"
                   value={newPoiTitle}

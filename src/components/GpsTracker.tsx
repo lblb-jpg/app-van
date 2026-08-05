@@ -395,7 +395,6 @@ export const GpsTracker: React.FC<GpsTrackerProps> = ({
               <span className="text-[11px] font-bold text-[#17352b]">Nom de la trace *</span>
               <input
                 type="text"
-                autoFocus
                 required
                 value={trackTitleInput}
                 onChange={(e) => setTrackTitleInput(e.target.value)}

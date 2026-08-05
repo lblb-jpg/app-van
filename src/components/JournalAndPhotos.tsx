@@ -14,6 +14,7 @@ import {
 import { JournalNote, TripPhoto, Friend, GpsPoint } from '../types';
 import { isGeolocationAvailable, reverseGeocodeCity } from '../services/geolocation';
 import { StepFormModal } from './StepFormModal';
+import { ModalShell } from './ModalShell';
 
 const ADD_NOTE_STEPS = [
   { id: 1, label: 'Infos', hint: 'Titre et lieu' },
@@ -490,7 +491,6 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
               <span className="text-[11px] font-bold text-[#17352b]">Titre de l'anecdote *</span>
               <input
                 type="text"
-                autoFocus
                 required
                 placeholder="ex: Apéro du soir & saucisson d'altitude"
                 value={noteTitle}
@@ -727,49 +727,43 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
         </div>
       )}
 
-      {photoToDelete && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/55 p-4 backdrop-blur-xs"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Confirmer la suppression"
-          onClick={() => setPhotoToDelete(null)}
-        >
-          <div
-            className="w-full max-w-sm space-y-4 rounded-[1.75rem] border border-zinc-200 bg-white p-5 shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div>
-              <h3 className="text-base font-extrabold text-zinc-900">Supprimer cette photo ?</h3>
-              <p className="mt-1.5 text-[12px] font-medium leading-relaxed text-zinc-500">
-                « {photoToDelete.caption?.trim() || 'Souvenir de route'} » sera retirée de la galerie
-                pour tout l’équipage.
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setPhotoToDelete(null)}
-                className="min-h-11 flex-1 rounded-2xl bg-zinc-100 px-4 py-2.5 text-xs font-bold text-zinc-700"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const id = photoToDelete.id;
-                  onDeletePhoto(id);
-                  setPhotoToDelete(null);
-                  if (selectedPhotoPreview?.id === id) setSelectedPhotoPreview(null);
-                }}
-                className="min-h-11 flex-[1.2] rounded-2xl bg-red-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-red-500"
-              >
-                Oui, supprimer
-              </button>
-            </div>
+      <ModalShell
+        isOpen={Boolean(photoToDelete)}
+        onClose={() => setPhotoToDelete(null)}
+        maxWidth="sm"
+      >
+        <div className="space-y-4 p-5 sm:p-6">
+          <div>
+            <h3 className="text-base font-extrabold text-[#17352b]">Supprimer cette photo ?</h3>
+            <p className="mt-1.5 text-[12px] font-medium leading-relaxed text-[#68756d]">
+              « {photoToDelete?.caption?.trim() || 'Souvenir de route'} » sera retirée de la galerie
+              pour tout l’équipage.
+            </p>
+          </div>
+          <div className="flex gap-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+            <button
+              type="button"
+              onClick={() => setPhotoToDelete(null)}
+              className="min-h-11 flex-1 rounded-xl bg-[#f5f1e7] px-4 py-2.5 text-xs font-bold text-[#68756d]"
+            >
+              Annuler
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!photoToDelete) return;
+                const id = photoToDelete.id;
+                onDeletePhoto(id);
+                setPhotoToDelete(null);
+                if (selectedPhotoPreview?.id === id) setSelectedPhotoPreview(null);
+              }}
+              className="min-h-11 flex-[1.2] rounded-xl bg-red-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-red-500"
+            >
+              Oui, supprimer
+            </button>
           </div>
         </div>
-      )}
+      </ModalShell>
     </div>
   );
 };

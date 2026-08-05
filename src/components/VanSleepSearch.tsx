@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ModalShell } from './ModalShell';
 import {
   BedDouble,
   Check,
@@ -582,16 +583,21 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
         </>
       )}
 
-      {navigationSpot && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#17352b]/45 p-4 backdrop-blur-xs sm:items-center">
-          <div className="w-full max-w-sm rounded-[1.75rem] bg-white p-5 shadow-2xl">
+      <ModalShell
+        isOpen={Boolean(navigationSpot)}
+        onClose={() => setNavigationSpot(null)}
+        maxWidth="sm"
+        titleId="sleep-nav-title"
+      >
+        {navigationSpot && (
+          <div className="p-5 sm:p-6">
             <p className="text-[9px] font-extrabold uppercase tracking-[.16em] text-[#eb6c32]">
               Ouvrir l’itinéraire
             </p>
-            <h3 className="mt-1 min-w-0 truncate text-base font-extrabold text-[#17352b]">
+            <h3 id="sleep-nav-title" className="mt-1 min-w-0 text-base font-extrabold text-[#17352b]">
               Aller à {navigationSpot.name}
             </h3>
-            <p className="mt-1 text-[10px] font-semibold text-zinc-500">
+            <p className="mt-1 text-[10px] font-semibold text-[#68756d]">
               Avec quelle application veux-tu partir ?
             </p>
 
@@ -601,7 +607,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                 target="_blank"
                 rel="noreferrer"
                 onClick={() => setNavigationSpot(null)}
-                className="flex items-center justify-center gap-2 rounded-2xl bg-[#33ccff] px-3 py-3 text-xs font-extrabold text-[#17352b]"
+                className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#33ccff] px-3 py-3 text-xs font-extrabold text-[#17352b]"
               >
                 🚙 Waze
               </a>
@@ -610,7 +616,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                 target="_blank"
                 rel="noreferrer"
                 onClick={() => setNavigationSpot(null)}
-                className="flex items-center justify-center gap-2 rounded-2xl bg-[#17352b] px-3 py-3 text-xs font-extrabold text-white"
+                className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#17352b] px-3 py-3 text-xs font-extrabold text-white"
               >
                 📍 Google Maps
               </a>
@@ -619,13 +625,13 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
             <button
               type="button"
               onClick={() => setNavigationSpot(null)}
-              className="mt-3 w-full py-2 text-[10px] font-bold text-zinc-400"
+              className="mt-3 w-full py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-[10px] font-bold text-[#68756d]"
             >
               Annuler
             </button>
           </div>
-        </div>
-      )}
+        )}
+      </ModalShell>
     </div>
   );
 };

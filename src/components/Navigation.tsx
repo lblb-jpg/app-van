@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import {
   Map,
   Navigation as GpsIcon,
@@ -137,20 +136,9 @@ export const Navigation: React.FC<NavigationProps> = ({
     setShowIosHelp(true);
   };
 
-  const navItems: { id: TabType; label: string; icon: React.ReactNode; badge?: boolean }[] = [
-    { id: 'map', label: 'Carte', icon: <Map /> },
-    { id: 'sleep', label: 'Dormir', icon: <BedDouble /> },
-    { id: 'gps', label: 'GPS', icon: <GpsIcon />, badge: isGpsRecording },
-    { id: 'radio', label: 'Talkie', icon: <Mic2 /> },
-    { id: 'waypoints', label: 'Étapes', icon: <Milestone /> },
-    { id: 'journal', label: 'Journal', icon: <BookOpen /> },
-    { id: 'budget', label: 'VanPay', icon: <Receipt /> },
-    { id: 'radar', label: 'Radar', icon: <Radio /> },
-  ];
-
   return (
     <>
-      <header className="van-header fixed inset-x-0 top-0 z-40 w-full px-3 pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-6 sm:pt-[max(0.75rem,env(safe-area-inset-top))]">
+      <header className="van-header shrink-0 z-40 w-full px-3 pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-6 sm:pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="van-header__inner mx-auto flex max-w-6xl items-center justify-between rounded-[1.35rem] px-3 py-2 sm:rounded-[1.6rem] sm:px-4 sm:py-2.5">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="van-brand-mark relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[1rem] text-white sm:h-11 sm:w-11 sm:rounded-[1.1rem]">
@@ -250,10 +238,6 @@ export const Navigation: React.FC<NavigationProps> = ({
           </div>
         </div>
       </header>
-      <div
-        aria-hidden="true"
-        className="shrink-0 w-full h-[calc(4.35rem+env(safe-area-inset-top))] sm:h-[calc(4.85rem+env(safe-area-inset-top))]"
-      />
 
       {showInstallHint && !standalone && (
         <div className="mx-3 mt-2 sm:mx-6">
@@ -363,53 +347,75 @@ export const Navigation: React.FC<NavigationProps> = ({
         </div>
       )}
 
-      {typeof document !== 'undefined' &&
-        createPortal(
-          <nav className="van-bottom-nav pointer-events-none" aria-label="Navigation principale">
-            <div className="flex w-full items-stretch justify-around gap-0.5 px-1 py-2 pointer-events-auto sm:gap-1 sm:px-2 sm:py-2.5">
-              {navItems.map((item) => {
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setActiveTab(item.id)}
-                    aria-current={isActive ? 'page' : undefined}
-                    className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-2 sm:rounded-[1.1rem]"
-                  >
-                    {isActive && (
-                      <motion.span
-                        layoutId="van-nav-bubble"
-                        className="absolute inset-0 rounded-xl bg-[#17352b] shadow-[0_6px_16px_rgba(23,53,43,.2)] sm:rounded-[1.1rem]"
-                        transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.6 }}
-                      />
-                    )}
-
-                    <span className="relative z-10 flex h-5 w-5 items-center justify-center sm:h-6 sm:w-6">
-                      {React.cloneElement(item.icon as React.ReactElement<{ className?: string }>, {
-                        className: `w-4 h-4 sm:w-[17px] sm:h-[17px] transition-colors duration-200 ${
-                          isActive ? 'text-[#ff9a62]' : 'text-[#7d857d]'
-                        }`,
-                      })}
-                      {item.badge && (
-                        <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white animate-pulse" />
-                      )}
-                    </span>
-
-                    <span
-                      className={`relative z-10 max-w-full truncate px-0.5 text-[8px] leading-none tracking-tight sm:text-[9px] ${
-                        isActive ? 'font-bold text-white' : 'font-semibold text-[#737d74]'
-                      }`}
-                    >
-                      {item.label}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </nav>,
-          document.body
-        )}
     </>
+  );
+};
+
+interface VanBottomNavProps {
+  activeTab: TabType;
+  setActiveTab: (tab: TabType) => void;
+  isGpsRecording: boolean;
+}
+
+export const VanBottomNav: React.FC<VanBottomNavProps> = ({
+  activeTab,
+  setActiveTab,
+  isGpsRecording,
+}) => {
+  const navItems: { id: TabType; label: string; icon: React.ReactNode; badge?: boolean }[] = [
+    { id: 'map', label: 'Carte', icon: <Map /> },
+    { id: 'sleep', label: 'Dormir', icon: <BedDouble /> },
+    { id: 'gps', label: 'GPS', icon: <GpsIcon />, badge: isGpsRecording },
+    { id: 'radio', label: 'Talkie', icon: <Mic2 /> },
+    { id: 'waypoints', label: 'Étapes', icon: <Milestone /> },
+    { id: 'journal', label: 'Journal', icon: <BookOpen /> },
+    { id: 'budget', label: 'VanPay', icon: <Receipt /> },
+    { id: 'radar', label: 'Radar', icon: <Radio /> },
+  ];
+
+  return (
+    <nav className="van-bottom-nav shrink-0" aria-label="Navigation principale">
+      <div className="flex w-full items-stretch justify-around gap-0.5 px-1 py-2 sm:gap-1 sm:px-2 sm:py-2.5">
+        {navItems.map((item) => {
+          const isActive = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setActiveTab(item.id)}
+              aria-current={isActive ? 'page' : undefined}
+              className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-2 sm:rounded-[1.1rem]"
+            >
+              {isActive && (
+                <motion.span
+                  layoutId="van-nav-bubble"
+                  className="absolute inset-0 rounded-xl bg-[#17352b] shadow-[0_6px_16px_rgba(23,53,43,.2)] sm:rounded-[1.1rem]"
+                  transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.6 }}
+                />
+              )}
+
+              <span className="relative z-10 flex h-5 w-5 items-center justify-center sm:h-6 sm:w-6">
+                {React.cloneElement(item.icon as React.ReactElement<{ className?: string }>, {
+                  className: `w-4 h-4 sm:w-[17px] sm:h-[17px] transition-colors duration-200 ${
+                    isActive ? 'text-[#ff9a62]' : 'text-[#7d857d]'
+                  }`,
+                })}
+                {item.badge && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white animate-pulse" />
+                )}
+              </span>
+
+              <span
+                className={`relative z-10 max-w-full truncate px-0.5 text-[8px] leading-none tracking-tight sm:text-[9px] ${
+                  isActive ? 'font-bold text-white' : 'font-semibold text-[#737d74]'
+                }`}
+              >
+                {item.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
   );
 };

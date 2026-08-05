@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import {
   Radio,
   ArrowUpRight,
@@ -639,9 +638,7 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
         </div>
       </div>
 
-      {editingFriend &&
-        typeof document !== 'undefined' &&
-        createPortal(
+      {editingFriend && (
           <StepFormModal
             isOpen={Boolean(editingFriend)}
             onClose={() => {
@@ -662,7 +659,6 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
             submitLabel="Enregistrer"
             error={photoError}
             titleId="crew-settings-title"
-            usePortal={false}
           >
             {profileStep === 1 && (
               <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
@@ -701,7 +697,6 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
                 <label className="block space-y-1.5">
                   <span className="text-[11px] font-bold text-[#17352b]">Nom affiché *</span>
                   <input
-                    autoFocus
                     required
                     maxLength={30}
                     value={editName}
@@ -712,8 +707,7 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
                 </label>
               </div>
             )}
-          </StepFormModal>,
-          document.body
+          </StepFormModal>
         )}
     </div>
   );
