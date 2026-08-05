@@ -15,6 +15,7 @@ import {
   bootstrapCloud,
   CloudContext,
   deleteExpense as cloudDeleteExpense,
+  deletePhoto as cloudDeletePhoto,
   deleteTrack as cloudDeleteTrack,
   deleteWaypoint as cloudDeleteWaypoint,
   insertExpense as cloudInsertExpense,
@@ -702,6 +703,21 @@ export default function App() {
     await dbService.savePhotos(updated);
   };
 
+  const handleDeletePhoto = async (id: string) => {
+    const ctx = cloudRef.current;
+    if (ctx) {
+      try {
+        await cloudDeletePhoto(ctx, id);
+      } catch (err: any) {
+        setSyncError(toUserFacingError(err, 'Impossible de supprimer la photo.'));
+        return;
+      }
+    }
+    const updated = photos.filter((photo) => photo.id !== id);
+    setPhotos(updated);
+    await dbService.savePhotos(updated);
+  };
+
   const handleAddExpense = async (newExpData: Omit<Expense, 'id'>) => {
     const ctx = cloudRef.current;
     if (ctx) {
@@ -1044,6 +1060,7 @@ export default function App() {
             currentFriendId={currentFriendId}
             onAddNote={handleAddJournalNote}
             onAddPhoto={handleAddPhoto}
+            onDeletePhoto={handleDeletePhoto}
           />
         )}
 

@@ -2,16 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { 
   BookOpen, 
   Camera, 
-  Image as ImageIcon, 
+  Image as ImageIcon,
   Plus, 
   User, 
   Calendar, 
   MapPin, 
   X, 
-  Filter, 
-  Heart, 
-  Share2,
-  Download
+  Filter,
+  Trash2,
 } from 'lucide-react';
 import { JournalNote, TripPhoto, Friend } from '../types';
 
@@ -85,6 +83,7 @@ interface JournalAndPhotosProps {
   currentFriendId: string;
   onAddNote: (newNote: Omit<JournalNote, 'id'>) => void;
   onAddPhoto: (newPhoto: Omit<TripPhoto, 'id'>) => void;
+  onDeletePhoto: (id: string) => void;
 }
 
 export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
@@ -93,13 +92,15 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   friends,
   currentFriendId,
   onAddNote,
-  onAddPhoto
+  onAddPhoto,
+  onDeletePhoto,
 }) => {
   const [activeTab, setActiveTab] = useState<'journal' | 'photos'>('journal');
   const [selectedFriendFilter, setSelectedFriendFilter] = useState<string>('all');
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [selectedPhotoPreview, setSelectedPhotoPreview] = useState<TripPhoto | null>(null);
+  const [photoToDelete, setPhotoToDelete] = useState<TripPhoto | null>(null);
 
   // New Note Form State
   const [noteTitle, setNoteTitle] = useState('');
@@ -348,15 +349,33 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
                 return (
                   <div
                     key={photo.id}
-                    onClick={() => setSelectedPhotoPreview(photo)}
-                    className="group relative rounded-[2rem] overflow-hidden bg-zinc-900 border border-zinc-200 shadow-xs cursor-pointer aspect-square"
+                    className="group relative rounded-[2rem] overflow-hidden bg-zinc-900 border border-zinc-200 shadow-xs aspect-square"
                   >
-                    <PhotoThumb
-                      src={photo.url}
-                      alt={photo.caption}
-                      className="group-hover:scale-110 transition-transform duration-300"
-                    />
-                    <div className="absolute inset-0 z-10 bg-gradient-to-t from-zinc-950/85 via-transparent to-transparent opacity-90 p-3 flex flex-col justify-end pointer-events-none">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPhotoPreview(photo)}
+                      className="absolute inset-0 z-0 cursor-pointer"
+                      aria-label={photo.caption || 'Ouvrir la photo'}
+                    >
+                      <PhotoThumb
+                        src={photo.url}
+                        alt={photo.caption}
+                        className="group-hover:scale-110 transition-transform duration-300"
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setPhotoToDelete(photo);
+                      }}
+                      className="absolute right-2 top-2 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-zinc-950/70 text-white ring-1 ring-white/20 backdrop-blur-sm transition hover:bg-red-600"
+                      aria-label={`Supprimer ${photo.caption || 'la photo'}`}
+                      title="Supprimer"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                    <div className="pointer-events-none absolute inset-0 z-10 bg-gradient-to-t from-zinc-950/85 via-transparent to-transparent opacity-90 p-3 flex flex-col justify-end">
                       <p className="text-white text-xs font-bold line-clamp-1">{photo.caption || 'Photo Van'}</p>
                       <div className="flex items-center justify-between text-[10px] text-zinc-300 mt-1 font-mono">
                         <span style={{ color: author?.color }} className="font-bold">
@@ -613,7 +632,7 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="pointer-events-none absolute inset-x-0 -top-16 h-16 bg-gradient-to-t from-zinc-950 to-transparent" />
-            <div className="relative mx-auto w-full max-w-lg space-y-2">
+            <div className="relative mx-auto w-full max-w-lg space-y-3">
               <h3 className="text-lg font-extrabold leading-snug text-white">
                 {selectedPhotoPreview.caption?.trim() || 'Souvenir de route'}
               </h3>
@@ -627,6 +646,58 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
                   {formatPhotoDate(selectedPhotoPreview.date)}
                 </span>
               </div>
+              <button
+                type="button"
+                onClick={() => setPhotoToDelete(selectedPhotoPreview)}
+                className="flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl bg-red-600/90 px-4 py-2.5 text-xs font-extrabold text-white ring-1 ring-red-400/30 transition hover:bg-red-500"
+              >
+                <Trash2 className="h-4 w-4" />
+                Supprimer cette photo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {photoToDelete && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-950/55 p-4 backdrop-blur-xs"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirmer la suppression"
+          onClick={() => setPhotoToDelete(null)}
+        >
+          <div
+            className="w-full max-w-sm space-y-4 rounded-[1.75rem] border border-zinc-200 bg-white p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div>
+              <h3 className="text-base font-extrabold text-zinc-900">Supprimer cette photo ?</h3>
+              <p className="mt-1.5 text-[12px] font-medium leading-relaxed text-zinc-500">
+                « {photoToDelete.caption?.trim() || 'Souvenir de route'} » sera retirée de la galerie
+                pour tout l’équipage.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setPhotoToDelete(null)}
+                className="min-h-11 flex-1 rounded-2xl bg-zinc-100 px-4 py-2.5 text-xs font-bold text-zinc-700"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const id = photoToDelete.id;
+                  onDeletePhoto(id);
+                  setPhotoToDelete(null);
+                  if (selectedPhotoPreview?.id === id) setSelectedPhotoPreview(null);
+                }}
+                className="min-h-11 flex-[1.2] rounded-2xl bg-red-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-red-500"
+              >
+                Oui, supprimer
+              </button>
             </div>
           </div>
         </div>
