@@ -19,6 +19,7 @@ import {
   deleteAllExpenses as cloudDeleteAllExpenses,
   deletePhoto as cloudDeletePhoto,
   deleteWaypoint as cloudDeleteWaypoint,
+  ensureSharedCrewTrip,
   insertExpense as cloudInsertExpense,
   updateExpense as cloudUpdateExpense,
   insertJournalNote as cloudInsertJournalNote,
@@ -28,7 +29,6 @@ import {
   isCloudConfigured,
   fetchLiveLocations,
   formatLastActive,
-  getTripInviteCode,
   loadTripBundle,
   mergeLiveLocationsIntoFriends,
   syncLocalDataToCloud,
@@ -68,10 +68,12 @@ import {
 import {
   CREW_MEMBER_NAMES,
   backfillCrewProfileAvatars,
-  ensureCrewAccounts,
   ensureCrewSession,
+  getStoredCrewUserMap,
   isCrewMemberName,
+  resolveCrewNameByUserId,
   resolvePreferredCrewName,
+  saveCrewUserId,
   switchToCrewMember,
   type CrewMemberName,
 } from './services/supabase';
@@ -210,11 +212,16 @@ export default function App() {
     bundle: Awaited<ReturnType<typeof loadTripBundle>>,
     userId: string
   ) => {
+    const storedCrewIds = getStoredCrewUserMap();
     const crewFriends = CREW_MEMBER_NAMES.flatMap((name) => {
-      const friend = bundle.friends.find(
-        (candidate) => candidate.name.trim().toLowerCase() === name.toLowerCase()
-      );
+      const mappedId = storedCrewIds[name];
+      const friend =
+        (mappedId ? bundle.friends.find((candidate) => candidate.id === mappedId) : undefined) ??
+        bundle.friends.find(
+          (candidate) => candidate.name.trim().toLowerCase() === name.toLowerCase()
+        );
       if (!friend) return [];
+      saveCrewUserId(name, friend.id);
       crewAccountNamesRef.current[friend.id] = name;
       const customization = readCrewCustomization(crewCustomizationsRef.current, friend.id, name);
       const displayName = customization?.name?.trim() || friend.name;
@@ -247,7 +254,7 @@ export default function App() {
     await mirrorLocal({ ...bundle, friends: visibleFriends, currentFriendId: selectedFriendId });
   };
 
-  const connectCloud = async () => {
+  const connectCloud = async (options?: { cloudOnly?: boolean; migrateLocal?: boolean }) => {
     setSyncError('');
     if (!isCloudConfigured()) {
       cloudRef.current = null;
@@ -267,6 +274,12 @@ export default function App() {
         return false;
       }
 
+      try {
+        ctx = await ensureSharedCrewTrip(ctx);
+      } catch (crewErr) {
+        console.warn('Crew trip sync failed', crewErr);
+      }
+
       cloudRef.current = ctx;
       setActiveTripIdState(ctx.tripId);
 
@@ -277,39 +290,26 @@ export default function App() {
         console.warn('Schéma Supabase incomplet (VanPay):', schemaIssues.join(', '));
       }
 
-      const local = {
-        pois: await dbService.getPois(),
-        waypoints: await dbService.getWaypoints(),
-        journal: await dbService.getJournal(),
-        photos: await dbService.getPhotos(),
-        expenses: await dbService.getExpenses(),
-        tracks: await dbService.getTracks(),
-      };
+      await applyBundle(bundle, ctx.user.id);
 
-      try {
-        bundle = await syncLocalDataToCloud(ctx, local);
-      } catch (pushErr) {
-        console.warn('Push local → cloud failed', pushErr);
-      }
+      if (options?.migrateLocal && !options?.cloudOnly) {
+        const local = {
+          pois: await dbService.getPois(),
+          waypoints: await dbService.getWaypoints(),
+          journal: await dbService.getJournal(),
+          photos: await dbService.getPhotos(),
+          expenses: await dbService.getExpenses(),
+          tracks: await dbService.getTracks(),
+        };
 
-      const existingCrewNames = new Set(
-        bundle.friends.map((friend) => friend.name.trim().toLowerCase())
-      );
-      const crewIsComplete = CREW_MEMBER_NAMES.every((name) =>
-        existingCrewNames.has(name.toLowerCase())
-      );
-
-      if (!crewIsComplete) {
         try {
-          const inviteCode = await getTripInviteCode(ctx);
-          await ensureCrewAccounts(inviteCode);
-          bundle = await loadTripBundle(ctx);
-        } catch (crewErr) {
-          console.warn('Crew bootstrap failed', crewErr);
+          const merged = await syncLocalDataToCloud(ctx, local);
+          await applyBundle(merged, ctx.user.id);
+        } catch (pushErr) {
+          console.warn('Push local → cloud failed', pushErr);
         }
       }
 
-      await applyBundle(bundle, ctx.user.id);
       setCloudReady(true);
       setIsAuthModalOpen(false);
       return true;
@@ -324,6 +324,12 @@ export default function App() {
 
   useEffect(() => {
     async function init() {
+      if (isCloudConfigured()) {
+        await connectCloud({ migrateLocal: true });
+        setBooting(false);
+        return;
+      }
+
       const rawFriends = await dbService.getFriends();
       const f = hydrateFriendAvatars(rawFriends);
       if (rawFriends.some((friend, index) => friend.avatar !== f[index]?.avatar)) {
@@ -347,10 +353,6 @@ export default function App() {
       const initialFriendId = currF || 'adel';
       currentFriendIdRef.current = initialFriendId;
       setCurrentFriendId(initialFriendId);
-
-      if (isCloudConfigured()) {
-        await connectCloud();
-      }
       setBooting(false);
     }
     void init();
@@ -598,11 +600,23 @@ export default function App() {
     return stop;
   }, [powerProfile]);
 
+  const resolveCrewAccountName = (friend: Friend): CrewMemberName | undefined => {
+    const fromRef = crewAccountNamesRef.current[friend.id];
+    if (fromRef) return fromRef;
+    const fromMap = resolveCrewNameByUserId(friend.id);
+    if (fromMap) return fromMap;
+    if (isCrewMemberName(friend.name)) return friend.name;
+    return undefined;
+  };
+
   const handleSwitchToCrewMember = (name: CrewMemberName) => {
+    const storedId = getStoredCrewUserMap()[name];
     const friend =
-      friends.find((candidate) => crewAccountNamesRef.current[candidate.id] === name) ||
+      (storedId ? friends.find((candidate) => candidate.id === storedId) : undefined) ??
+      friends.find((candidate) => crewAccountNamesRef.current[candidate.id] === name) ??
       friends.find((candidate) => candidate.name.trim().toLowerCase() === name.toLowerCase());
     if (friend) void handleCurrentFriendChange(friend.id);
+    else void switchToCrewMember(name).then(() => connectCloud({ cloudOnly: true }));
   };
 
   const handleUpdateOwnProfile = async (patch: { name: string; avatar: string }) => {
@@ -642,6 +656,7 @@ export default function App() {
   };
 
   const profileFriend = friends.find((friend) => friend.id === currentFriendId) || friends[0];
+  const activeAuthorId = (cloudReady && cloudRef.current?.user.id) || currentFriendId;
   const activeCrewName = profileFriend
     ? (crewAccountNamesRef.current[profileFriend.id] ||
         (isCrewMemberName(profileFriend.name) ? profileFriend.name : undefined))
@@ -652,8 +667,12 @@ export default function App() {
 
     const ctx = cloudRef.current;
     const friend = friends.find((candidate) => candidate.id === id);
-    const crewAccountName = crewAccountNamesRef.current[id];
-    if (ctx && friend && id !== ctx.user.id && crewAccountName) {
+    if (!friend) return;
+
+    const crewAccountName = resolveCrewAccountName(friend);
+    const needsAuthSwitch = Boolean(ctx && crewAccountName && id !== ctx.user.id);
+
+    if (needsAuthSwitch && crewAccountName) {
       setBooting(true);
       setCloudReady(false);
       setSyncError('');
@@ -662,7 +681,7 @@ export default function App() {
         currentFriendIdRef.current = user.id;
         setCurrentFriendId(user.id);
         await dbService.saveCurrentFriendId(user.id);
-        await connectCloud();
+        await connectCloud({ cloudOnly: true });
       } catch (err) {
         setSyncError(toUserFacingError(err, `Impossible de passer sur le profil ${friend.name}.`));
       } finally {
@@ -674,6 +693,15 @@ export default function App() {
     currentFriendIdRef.current = id;
     setCurrentFriendId(id);
     void dbService.saveCurrentFriendId(id);
+
+    if (ctx && isCloudConfigured()) {
+      try {
+        const bundle = await loadTripBundle(ctx);
+        await applyBundle(bundle, ctx.user.id);
+      } catch (err) {
+        console.warn('Trip reload on profile change failed', err);
+      }
+    }
   };
 
   const handleAddPoi = async (newPoiData: Omit<Poi, 'id' | 'createdAt'>) => {
@@ -720,6 +748,7 @@ export default function App() {
 
   const handleAddPhoto = async (newPhotoData: Omit<TripPhoto, 'id'>) => {
     const ctx = cloudRef.current;
+    const isVideo = newPhotoData.mediaType === 'video';
     if (ctx) {
       try {
         const saved = await cloudInsertPhoto(ctx, newPhotoData);
@@ -728,7 +757,9 @@ export default function App() {
         await dbService.savePhotos(updated);
         return;
       } catch (err: any) {
-        setSyncError(toUserFacingError(err, 'Impossible d’ajouter la photo.'));
+        setSyncError(
+          toUserFacingError(err, isVideo ? 'Impossible d’ajouter la vidéo.' : 'Impossible d’ajouter la photo.')
+        );
       }
     }
     const newPhoto: TripPhoto = { ...newPhotoData, id: 'photo_' + Date.now() };
@@ -937,6 +968,7 @@ export default function App() {
                 pois={pois}
                 friends={friends}
                 currentFriendId={currentFriendId}
+                authorId={activeAuthorId}
                 photos={photos}
                 waypoints={waypoints}
                 journal={journal}
@@ -992,6 +1024,7 @@ export default function App() {
             photos={photos}
             friends={friends}
             currentFriendId={currentFriendId}
+            authorId={activeAuthorId}
             userLocation={userLocation}
             onAddNote={handleAddJournalNote}
             onAddPhoto={handleAddPhoto}
@@ -1003,7 +1036,7 @@ export default function App() {
           <TricountBudget
             expenses={expenses}
             friends={friends}
-            currentFriendId={currentFriendId}
+            authorId={activeAuthorId}
             onAddExpense={handleAddExpense}
             onUpdateExpense={handleUpdateExpense}
             onDeleteExpense={handleDeleteExpense}

@@ -14,10 +14,39 @@ import type {
 } from '../types';
 import { inferMediaType } from '../lib/mediaUtils';
 import { CREW_DEFAULT_COLORS, resolveFriendAvatar } from '../lib/crewAvatars';
-import { ensureSupabaseSession, getSupabaseClient, isCrewMemberName } from './supabase';
+import { ensureSupabaseSession, ensureCrewAccounts, getSupabaseClient, isCrewMemberName } from './supabase';
 
 const TRIP_KEY = 'van_current_trip_id_v1';
+const CREW_INVITE_KEY = 'van_crew_invite_code_v1';
 const POINT_CHUNK = 400;
+
+export function getStoredCrewInviteCode() {
+  try {
+    return localStorage.getItem(CREW_INVITE_KEY)?.trim().toUpperCase() || '';
+  } catch {
+    return '';
+  }
+}
+
+export function saveCrewInviteCode(code: string) {
+  const cleaned = code.trim().toUpperCase();
+  if (cleaned.length < 6) return;
+  try {
+    localStorage.setItem(CREW_INVITE_KEY, cleaned);
+  } catch {
+    // ignore
+  }
+}
+
+async function joinTripWithInvite(supabase: SupabaseClient, inviteCode: string) {
+  const cleaned = inviteCode.trim().toUpperCase();
+  if (cleaned.length < 6) return null;
+  const { data, error } = await supabase.rpc('join_trip_by_code', { invite: cleaned });
+  if (error || !data) return null;
+  const tripId = String(data);
+  localStorage.setItem(TRIP_KEY, tripId);
+  return tripId;
+}
 
 export type CloudContext = {
   supabase: SupabaseClient;
@@ -109,20 +138,42 @@ async function uploadPhotoBlob(
     return source;
   }
 
+  const videoMimeExt: Record<string, string> = {
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/quicktime': 'mov',
+    'video/x-m4v': 'm4v',
+    'video/mov': 'mov',
+  };
+
   let blob: Blob;
-  let ext = 'jpg';
   if (source.startsWith('data:') || source.startsWith('blob:')) {
     const res = await fetch(source);
     blob = await res.blob();
-    const mime = blob.type || 'image/jpeg';
-    ext = mime.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
   } else {
     blob = new Blob([source], { type: 'text/plain' });
   }
 
-  const path = `${tripId}/${userId}/${Date.now()}-${filenameHint.replace(/\s+/g, '-')}.${ext}`;
+  const hintIsVideo =
+    inferMediaType(source) === 'video' || /\.(mp4|webm|mov|m4v)$/i.test(filenameHint);
+  const isVideo = /^video\//i.test(blob.type) || hintIsVideo;
+  const contentType = isVideo
+    ? /^video\//i.test(blob.type)
+      ? blob.type
+      : 'video/mp4'
+    : blob.type || 'image/jpeg';
+  const ext = isVideo
+    ? videoMimeExt[contentType] || 'mp4'
+    : contentType.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+  const stem =
+    filenameHint
+      .replace(/\s+/g, '-')
+      .replace(/\.[^.]+$/, '')
+      .replace(/\.(mp4|webm|mov|m4v|jpe?g|png|webp|gif)$/i, '') || (isVideo ? 'video' : 'photo');
+
+  const path = `${tripId}/${userId}/${Date.now()}-${stem}.${ext}`;
   const { error } = await supabase.storage.from('trip-photos').upload(path, blob, {
-    contentType: blob.type || 'image/jpeg',
+    contentType,
     upsert: false,
   });
   if (error) throw error;
@@ -185,14 +236,32 @@ function mapExpenseRow(row: any): Expense {
   };
 }
 
+type MemberLookup = {
+  memberIds: Set<string>;
+  legacyIdToUserId: Map<string, string>;
+};
+
+function asMemberId(
+  friendId: string | undefined,
+  fallbackUserId: string,
+  lookup: MemberLookup
+) {
+  if (friendId && isUuid(friendId) && lookup.memberIds.has(friendId)) return friendId;
+  if (friendId) {
+    const mapped = lookup.legacyIdToUserId.get(friendId.trim().toLowerCase());
+    if (mapped) return mapped;
+  }
+  return fallbackUserId;
+}
+
 function buildSplitRows(
   expense: Omit<Expense, 'id'>,
-  memberIds: Set<string>,
+  lookup: MemberLookup,
   paidBy: string,
   currentUserId: string
 ) {
   const participants = (expense.splitAmongFriendIds?.length ? expense.splitAmongFriendIds : [paidBy])
-    .map((id) => asMemberId(id, currentUserId, memberIds))
+    .map((id) => asMemberId(id, currentUserId, lookup))
     .filter((id, idx, arr) => arr.indexOf(id) === idx);
 
   const splitType = expense.splitType ?? 'equal';
@@ -200,7 +269,7 @@ function buildSplitRows(
 
   return participants.map((user_id) => {
     const detail = details.find(
-      (item) => asMemberId(item.friendId, currentUserId, memberIds) === user_id
+      (item) => asMemberId(item.friendId, currentUserId, lookup) === user_id
     );
     return {
       user_id,
@@ -248,6 +317,99 @@ async function fetchTripExpenses(ctx: CloudContext) {
   throw res.error ?? new Error('Impossible de charger les dépenses.');
 }
 
+async function isTripMember(supabase: SupabaseClient, userId: string, tripId: string) {
+  const { data } = await supabase
+    .from('trip_members')
+    .select('trip_id')
+    .eq('trip_id', tripId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  return Boolean(data);
+}
+
+async function pickBestMembershipTrip(supabase: SupabaseClient, userId: string) {
+  const { data: memberships, error } = await supabase
+    .from('trip_members')
+    .select('trip_id')
+    .eq('user_id', userId);
+  if (error) throw error;
+  if (!memberships?.length) return null;
+
+  let bestTripId = memberships[0].trip_id as string;
+  let bestCount = -1;
+  for (const row of memberships) {
+    const tripId = row.trip_id as string;
+    const { count, error: countError } = await supabase
+      .from('trip_members')
+      .select('*', { count: 'exact', head: true })
+      .eq('trip_id', tripId);
+    if (countError) continue;
+    const memberCount = count ?? 0;
+    if (memberCount > bestCount) {
+      bestCount = memberCount;
+      bestTripId = tripId;
+    }
+  }
+  return bestTripId;
+}
+
+/** Garantit que le compte connecté peut créer du contenu (rôle editor ou owner). */
+async function ensureTripEditorMembership(ctx: CloudContext) {
+  const { data: trip } = await ctx.supabase
+    .from('trips')
+    .select('owner_id')
+    .eq('id', ctx.tripId)
+    .maybeSingle();
+
+  const { data: existing } = await ctx.supabase
+    .from('trip_members')
+    .select('member_role')
+    .eq('trip_id', ctx.tripId)
+    .eq('user_id', ctx.user.id)
+    .maybeSingle();
+
+  const targetRole = trip?.owner_id === ctx.user.id ? 'owner' : 'editor';
+
+  if (!existing) {
+    const { error } = await ctx.supabase.from('trip_members').insert({
+      trip_id: ctx.tripId,
+      user_id: ctx.user.id,
+      member_role: targetRole,
+    });
+    if (error) console.warn('trip_members insert failed:', error.message);
+    return;
+  }
+
+  if (existing.member_role === 'viewer') {
+    const { error } = await ctx.supabase
+      .from('trip_members')
+      .update({ member_role: 'editor' })
+      .eq('trip_id', ctx.tripId)
+      .eq('user_id', ctx.user.id);
+    if (error) console.warn('trip_members upgrade failed:', error.message);
+  }
+}
+
+export async function ensureSharedCrewTrip(ctx: CloudContext): Promise<CloudContext> {
+  let inviteCode = getStoredCrewInviteCode();
+  if (!inviteCode) {
+    inviteCode = await getTripInviteCode(ctx);
+    saveCrewInviteCode(inviteCode);
+  }
+
+  await ensureCrewAccounts(inviteCode);
+  const sharedTripId = await joinTripByCode(ctx, inviteCode);
+  const nextCtx =
+    sharedTripId === ctx.tripId ? ctx : { ...ctx, tripId: sharedTripId };
+
+  await ensureTripEditorMembership(nextCtx);
+
+  if (sharedTripId === ctx.tripId) return nextCtx;
+
+  localStorage.setItem(TRIP_KEY, sharedTripId);
+  return nextCtx;
+}
+
 export async function bootstrapCloud(): Promise<CloudContext | null> {
   const { supabase, user, error } = await ensureSupabaseSession();
   if (!supabase || !user) {
@@ -278,31 +440,43 @@ export async function bootstrapCloud(): Promise<CloudContext | null> {
     if (profileError) throw profileError;
   }
 
+  const storedInvite = getStoredCrewInviteCode();
+
+  // Toujours tenter le voyage partagé en premier (évite les voyages dupliqués par profil).
+  if (storedInvite) {
+    const joinedTripId = await joinTripWithInvite(supabase, storedInvite);
+    if (joinedTripId) {
+      localStorage.setItem(TRIP_KEY, joinedTripId);
+      try {
+        const code = await getTripInviteCode({ supabase, user, tripId: joinedTripId });
+        saveCrewInviteCode(code);
+      } catch {
+        saveCrewInviteCode(upperInviteCode(joinedTripId));
+      }
+      const joinedCtx = { supabase, user, tripId: joinedTripId };
+      await ensureTripEditorMembership(joinedCtx);
+      return joinedCtx;
+    }
+  }
+
   let tripId = localStorage.getItem(TRIP_KEY);
   if (tripId) {
     const { data: existing } = await supabase.from('trips').select('id').eq('id', tripId).maybeSingle();
-    if (!existing) {
+    if (!existing || !(await isTripMember(supabase, user.id, tripId))) {
       tripId = null;
-    } else {
-      const { data: membership } = await supabase
-        .from('trip_members')
-        .select('trip_id')
-        .eq('trip_id', tripId)
-        .eq('user_id', user.id)
-        .maybeSingle();
-      if (!membership) tripId = null;
     }
   }
 
   if (!tripId) {
-    const { data: memberships, error: memberError } = await supabase
-      .from('trip_members')
-      .select('trip_id, joined_at')
-      .eq('user_id', user.id)
-      .order('joined_at', { ascending: true })
-      .limit(1);
-    if (memberError) throw memberError;
-    tripId = memberships?.[0]?.trip_id ?? null;
+    tripId = await pickBestMembershipTrip(supabase, user.id);
+  }
+
+  if (!tripId && storedInvite) {
+    tripId = await joinTripWithInvite(supabase, storedInvite);
+  }
+
+  if (!tripId && storedInvite) {
+    throw new Error('Impossible de rejoindre le voyage partagé. Reconnecte-toi avec le profil Adel.');
   }
 
   if (!tripId) {
@@ -327,10 +501,12 @@ export async function bootstrapCloud(): Promise<CloudContext | null> {
     .eq('user_id', user.id)
     .maybeSingle();
   if (!ensuredMember) {
+    const { data: trip } = await supabase.from('trips').select('owner_id').eq('id', tripId).maybeSingle();
+    const memberRole = trip?.owner_id === user.id ? 'owner' : 'editor';
     const { error: memberInsertError } = await supabase.from('trip_members').insert({
       trip_id: tripId,
       user_id: user.id,
-      member_role: 'owner',
+      member_role: memberRole,
     });
     if (memberInsertError) {
       console.warn('trip_members ensure failed:', memberInsertError.message);
@@ -338,6 +514,14 @@ export async function bootstrapCloud(): Promise<CloudContext | null> {
   }
 
   localStorage.setItem(TRIP_KEY, tripId);
+
+  try {
+    const code = await getTripInviteCode({ supabase, user, tripId });
+    saveCrewInviteCode(code);
+  } catch {
+    saveCrewInviteCode(upperInviteCode(tripId));
+  }
+
   return { supabase, user, tripId };
 }
 
@@ -539,14 +723,9 @@ export async function loadTripBundle(ctx: CloudContext) {
   return { friends, pois, waypoints, journal, photos, expenses, tracks };
 }
 
-function asMemberId(friendId: string | undefined, fallbackUserId: string, memberIds: Set<string>) {
-  if (friendId && isUuid(friendId) && memberIds.has(friendId)) return friendId;
-  return fallbackUserId;
-}
-
 export async function insertPoi(ctx: CloudContext, poi: Omit<Poi, 'id' | 'createdAt'> & { id?: string }) {
-  const memberIds = new Set((await loadMemberIds(ctx)));
-  const createdBy = asMemberId(poi.createdByFriendId, ctx.user.id, memberIds);
+  // RLS exige created_by = auth.uid() — l'auteur est toujours le profil connecté.
+  const createdBy = ctx.user.id;
   let photoUrl = poi.photoUrl ?? null;
   if (photoUrl && (photoUrl.startsWith('data:') || photoUrl.startsWith('blob:'))) {
     const path = await uploadPhotoBlob(ctx.supabase, ctx.tripId, ctx.user.id, photoUrl, 'poi.jpg');
@@ -610,8 +789,7 @@ export async function deletePhoto(ctx: CloudContext, id: string) {
 }
 
 export async function insertJournalNote(ctx: CloudContext, note: Omit<JournalNote, 'id'> & { id?: string }) {
-  const memberIds = new Set(await loadMemberIds(ctx));
-  const authorId = asMemberId(note.friendId, ctx.user.id, memberIds);
+  const authorId = ctx.user.id;
   const { data, error } = await ctx.supabase
     .from('journal_notes')
     .insert({
@@ -659,8 +837,7 @@ export async function insertJournalNote(ctx: CloudContext, note: Omit<JournalNot
 }
 
 export async function insertPhoto(ctx: CloudContext, photo: Omit<TripPhoto, 'id'> & { id?: string }) {
-  const memberIds = new Set(await loadMemberIds(ctx));
-  const authorId = asMemberId(photo.friendId, ctx.user.id, memberIds);
+  const authorId = ctx.user.id;
   const isVideo = photo.mediaType === 'video' || inferMediaType(photo.url) === 'video';
   const storagePath = await uploadPhotoBlob(
     ctx.supabase,
@@ -699,9 +876,9 @@ export async function insertPhoto(ctx: CloudContext, photo: Omit<TripPhoto, 'id'
 }
 
 export async function insertExpense(ctx: CloudContext, expense: Omit<Expense, 'id'> & { id?: string }) {
-  const memberIds = new Set(await loadMemberIds(ctx));
-  const paidBy = asMemberId(expense.paidByFriendId, ctx.user.id, memberIds);
-  const splitRows = buildSplitRows(expense, memberIds, paidBy, ctx.user.id);
+  const lookup = await loadMemberLookup(ctx);
+  const paidBy = asMemberId(expense.paidByFriendId, ctx.user.id, lookup);
+  const splitRows = buildSplitRows(expense, lookup, paidBy, ctx.user.id);
 
   const baseRow = {
     trip_id: ctx.tripId,
@@ -760,9 +937,9 @@ export async function insertExpense(ctx: CloudContext, expense: Omit<Expense, 'i
 }
 
 export async function updateExpense(ctx: CloudContext, id: string, expense: Omit<Expense, 'id'>) {
-  const memberIds = new Set(await loadMemberIds(ctx));
-  const paidBy = asMemberId(expense.paidByFriendId, ctx.user.id, memberIds);
-  const splitRows = buildSplitRows(expense, memberIds, paidBy, ctx.user.id);
+  const lookup = await loadMemberLookup(ctx);
+  const paidBy = asMemberId(expense.paidByFriendId, ctx.user.id, lookup);
+  const splitRows = buildSplitRows(expense, lookup, paidBy, ctx.user.id);
 
   const baseUpdate = {
     description: expense.description,
@@ -1004,8 +1181,7 @@ async function insertTrackPoints(ctx: CloudContext, trackId: string, points: Gps
 }
 
 export async function insertTrack(ctx: CloudContext, track: Omit<GpsTrack, 'id'> & { id?: string }) {
-  const memberIds = new Set(await loadMemberIds(ctx));
-  const createdBy = asMemberId(track.createdByFriendId, ctx.user.id, memberIds);
+  const createdBy = ctx.user.id;
   const { data, error } = await ctx.supabase
     .from('gps_tracks')
     .insert({
@@ -1115,13 +1291,48 @@ export async function updateOwnProfile(
   if (error) throw error;
 }
 
-async function loadMemberIds(ctx: CloudContext) {
+async function loadMemberLookup(ctx: CloudContext): Promise<MemberLookup> {
   const { data, error } = await ctx.supabase
     .from('trip_members')
-    .select('user_id')
+    .select('user_id, profiles(name)')
     .eq('trip_id', ctx.tripId);
   if (error) throw error;
-  return (data ?? []).map((r) => r.user_id as string);
+
+  const memberIds = new Set<string>();
+  const legacyIdToUserId = new Map<string, string>();
+
+  for (const row of data ?? []) {
+    const userId = row.user_id as string;
+    memberIds.add(userId);
+    const name = ((row.profiles as { name?: string } | null)?.name || '').trim().toLowerCase();
+    if (name) legacyIdToUserId.set(name, userId);
+  }
+
+  for (const legacyId of ['adel', 'paul', 'yanis']) {
+    const mapped = legacyIdToUserId.get(legacyId);
+    if (mapped) legacyIdToUserId.set(legacyId, mapped);
+  }
+
+  return { memberIds, legacyIdToUserId };
+}
+
+function hasLocalOnlyRows(local: {
+  pois: Poi[];
+  waypoints: Waypoint[];
+  journal: JournalNote[];
+  photos: TripPhoto[];
+  expenses: Expense[];
+  tracks: GpsTrack[];
+}) {
+  const rows = [
+    ...local.pois,
+    ...local.waypoints,
+    ...local.journal,
+    ...local.photos,
+    ...local.expenses,
+    ...local.tracks,
+  ];
+  return rows.some((row) => isLocalOnlyId(row.id));
 }
 
 /**
@@ -1139,16 +1350,20 @@ export async function syncLocalDataToCloud(
     tracks: GpsTrack[];
   }
 ) {
+  if (!hasLocalOnlyRows(local)) {
+    return loadTripBundle(ctx);
+  }
+
   const remote = await loadTripBundle(ctx);
   let pushed = 0;
   const errors: string[] = [];
 
   const remotePoiKeys = new Set(remote.pois.map(poiFingerprint));
   for (const poi of local.pois) {
-    if (!isLocalOnlyId(poi.id) && remote.pois.some((r) => r.id === poi.id)) continue;
+    if (!isLocalOnlyId(poi.id)) continue;
     if (remotePoiKeys.has(poiFingerprint(poi))) continue;
     try {
-      const saved = await insertPoi(ctx, { ...poi, createdByFriendId: ctx.user.id });
+      const saved = await insertPoi(ctx, poi);
       remotePoiKeys.add(poiFingerprint(saved));
       pushed += 1;
     } catch (err: any) {
@@ -1157,10 +1372,9 @@ export async function syncLocalDataToCloud(
   }
 
   const remoteWpKeys = new Set(remote.waypoints.map(waypointFingerprint));
-  const localOnlyWaypoints = local.waypoints.filter((wp) => {
-    if (!isLocalOnlyId(wp.id) && remote.waypoints.some((r) => r.id === wp.id)) return false;
-    return !remoteWpKeys.has(waypointFingerprint(wp));
-  });
+  const localOnlyWaypoints = local.waypoints.filter(
+    (wp) => isLocalOnlyId(wp.id) && !remoteWpKeys.has(waypointFingerprint(wp))
+  );
   if (localOnlyWaypoints.length && !remote.waypoints.length) {
     try {
       await replaceWaypoints(
@@ -1188,10 +1402,10 @@ export async function syncLocalDataToCloud(
 
   const remoteJournalKeys = new Set(remote.journal.map(journalFingerprint));
   for (const note of local.journal) {
-    if (!isLocalOnlyId(note.id) && remote.journal.some((r) => r.id === note.id)) continue;
+    if (!isLocalOnlyId(note.id)) continue;
     if (remoteJournalKeys.has(journalFingerprint(note))) continue;
     try {
-      const saved = await insertJournalNote(ctx, { ...note, friendId: ctx.user.id });
+      const saved = await insertJournalNote(ctx, note);
       remoteJournalKeys.add(journalFingerprint(saved));
       pushed += 1;
     } catch (err: any) {
@@ -1201,12 +1415,12 @@ export async function syncLocalDataToCloud(
 
   const remotePhotoKeys = new Set(remote.photos.map(photoFingerprint));
   for (const photo of local.photos) {
-    if (!isLocalOnlyId(photo.id) && remote.photos.some((r) => r.id === photo.id)) continue;
+    if (!isLocalOnlyId(photo.id)) continue;
     if (remotePhotoKeys.has(photoFingerprint(photo))) continue;
     // Skip empty / broken local placeholders.
     if (!photo.url) continue;
     try {
-      const saved = await insertPhoto(ctx, { ...photo, friendId: ctx.user.id });
+      const saved = await insertPhoto(ctx, photo);
       remotePhotoKeys.add(photoFingerprint(saved));
       pushed += 1;
     } catch (err: any) {
@@ -1216,16 +1430,10 @@ export async function syncLocalDataToCloud(
 
   const remoteExpenseKeys = new Set(remote.expenses.map(expenseFingerprint));
   for (const expense of local.expenses) {
-    if (!isLocalOnlyId(expense.id) && remote.expenses.some((r) => r.id === expense.id)) continue;
+    if (!isLocalOnlyId(expense.id)) continue;
     if (remoteExpenseKeys.has(expenseFingerprint(expense))) continue;
     try {
-      const saved = await insertExpense(ctx, {
-        ...expense,
-        paidByFriendId: ctx.user.id,
-        splitAmongFriendIds: expense.splitAmongFriendIds?.length
-          ? expense.splitAmongFriendIds
-          : [ctx.user.id],
-      });
+      const saved = await insertExpense(ctx, expense);
       remoteExpenseKeys.add(expenseFingerprint(saved));
       pushed += 1;
     } catch (err: any) {
@@ -1235,11 +1443,11 @@ export async function syncLocalDataToCloud(
 
   const remoteTrackKeys = new Set(remote.tracks.map(trackFingerprint));
   for (const track of local.tracks) {
-    if (!isLocalOnlyId(track.id) && remote.tracks.some((r) => r.id === track.id)) continue;
+    if (!isLocalOnlyId(track.id)) continue;
     if (remoteTrackKeys.has(trackFingerprint(track))) continue;
     if (!track.points?.length) continue;
     try {
-      const saved = await insertTrack(ctx, { ...track, createdByFriendId: ctx.user.id });
+      const saved = await insertTrack(ctx, track);
       remoteTrackKeys.add(trackFingerprint(saved));
       pushed += 1;
     } catch (err: any) {

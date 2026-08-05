@@ -12,12 +12,39 @@ export interface SupabaseConfig {
 }
 
 const DISPLAY_NAME_KEY = 'van_display_name_v1';
+const CREW_USER_MAP_KEY = 'van_crew_user_map_v1';
 
 let client: SupabaseClient | null = null;
 let clientKey: string | null = null;
 
 export const CREW_MEMBER_NAMES = ['Adel', 'Paul', 'Yanis'] as const;
 export type CrewMemberName = (typeof CREW_MEMBER_NAMES)[number];
+
+export type CrewUserMap = Partial<Record<CrewMemberName, string>>;
+
+export function getStoredCrewUserMap(): CrewUserMap {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CREW_USER_MAP_KEY) || '{}') as CrewUserMap;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveCrewUserId(name: CrewMemberName, userId: string) {
+  const map = getStoredCrewUserMap();
+  map[name] = userId;
+  try {
+    localStorage.setItem(CREW_USER_MAP_KEY, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+}
+
+export function resolveCrewNameByUserId(userId: string): CrewMemberName | undefined {
+  const map = getStoredCrewUserMap();
+  return CREW_MEMBER_NAMES.find((name) => map[name] === userId);
+}
 
 function stripQuotes(value: string) {
   return value.trim().replace(/^["']|["']$/g, '');
@@ -284,6 +311,7 @@ export async function switchToCrewMember(name: CrewMemberName) {
   const targetEmail = credentialsFromDisplayName(name).email;
   if (existing.session?.user.email?.toLowerCase() === targetEmail) {
     saveDisplayName(name);
+    saveCrewUserId(name, existing.session.user.id);
     await upsertProfileName(supabase, existing.session.user.id, name);
     return existing.session.user;
   }
@@ -291,6 +319,7 @@ export async function switchToCrewMember(name: CrewMemberName) {
   if (existing.session) await supabase.auth.signOut();
   const user = await signInOrCreateCrewAccount(supabase, name);
   saveDisplayName(name);
+  saveCrewUserId(name, user.id);
   return user;
 }
 
@@ -329,7 +358,8 @@ export async function ensureCrewAccounts(inviteCode: string) {
       const isolated = createClient(config.url, config.anonKey, {
         auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
       });
-      await signInOrCreateCrewAccount(isolated, name);
+      const user = await signInOrCreateCrewAccount(isolated, name);
+      saveCrewUserId(name, user.id);
       const { error } = await isolated.rpc('join_trip_by_code', {
         invite: inviteCode.trim().toUpperCase(),
       });

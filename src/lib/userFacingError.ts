@@ -31,6 +31,17 @@ export function toUserFacingError(error: unknown, fallback = 'Action impossible 
   if (message.includes('share_count') || message.includes('split_amount') || message.includes('split_type')) {
     return 'Base Supabase à mettre à jour. Exécute supabase/ensure_full_sync.sql puis recharge l’app.';
   }
+  if (
+    message.includes('mime') ||
+    message.includes('not allowed') ||
+    message.includes('invalid file') ||
+    message.includes('payload too large') ||
+    message === '400' ||
+    message.includes('status 400') ||
+    message.includes('bad request')
+  ) {
+    return 'Upload vidéo refusé par Supabase. Exécute supabase/add_video_storage.sql dans le SQL Editor, puis réessaie.';
+  }
   if (message.includes('indique un prénom') || message.includes('prénom')) {
     return 'Indique un prénom pour continuer.';
   }

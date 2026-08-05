@@ -42,7 +42,7 @@ import {
 interface TricountBudgetProps {
   expenses: Expense[];
   friends: Friend[];
-  currentFriendId: string;
+  authorId: string;
   onAddExpense: (newExpense: Omit<Expense, 'id'>) => void;
   onUpdateExpense: (id: string, data: Omit<Expense, 'id'>) => void;
   onDeleteExpense: (id: string) => void;
@@ -176,7 +176,7 @@ function todayIso() {
 export const TricountBudget: React.FC<TricountBudgetProps> = ({
   expenses,
   friends,
-  currentFriendId,
+  authorId,
   onAddExpense,
   onUpdateExpense,
   onDeleteExpense,
@@ -194,7 +194,7 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
   const [currency, setCurrency] = useState('EUR');
   const [expenseDate, setExpenseDate] = useState(todayIso());
   const [category, setCategory] = useState<ExpenseCategory>('courses');
-  const [paidBy, setPaidBy] = useState(currentFriendId);
+  const [paidBy, setPaidBy] = useState(authorId);
   const [splitType, setSplitType] = useState<SplitType>('equal');
   const [splitWith, setSplitWith] = useState<string[]>(() => friends.map((f) => f.id));
   const [shareCounts, setShareCounts] = useState<Record<string, number>>({});
@@ -219,7 +219,7 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
     setCurrency('EUR');
     setExpenseDate(todayIso());
     setCategory('courses');
-    setPaidBy(ids.includes(currentFriendId) ? currentFriendId : ids[0] || '');
+    setPaidBy(ids.includes(authorId) ? authorId : ids[0] || '');
     setSplitType('equal');
     setSplitWith(ids);
     setShareCounts(Object.fromEntries(ids.map((id) => [id, 1])));
@@ -272,12 +272,18 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
     if (!showFormModal) return;
     const ids = friends.map((f) => f.id);
     if (!ids.length) return;
-    setPaidBy((prev) => (ids.includes(prev) ? prev : currentFriendId));
+    setPaidBy((prev) => (ids.includes(prev) ? prev : authorId));
     setSplitWith((prev) => {
       const kept = prev.filter((id) => ids.includes(id));
       return kept.length ? kept : ids;
     });
-  }, [friends, currentFriendId, showFormModal]);
+  }, [friends, authorId, showFormModal]);
+
+  useEffect(() => {
+    if (!showFormModal && !editingExpense) {
+      setPaidBy(authorId);
+    }
+  }, [authorId, showFormModal, editingExpense]);
 
   const parsedAmount = useMemo(() => parseAmount(amount), [amount]);
   const participantAmounts = useMemo(() => {
@@ -359,7 +365,7 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
   }, [hasDraftAmount, splitWith, paidBy, participantAmounts]);
 
   const displayName = (id: string) =>
-    id === currentFriendId ? 'Moi' : friendById[id]?.name || 'Équipier';
+    id === authorId ? 'Moi' : friendById[id]?.name || 'Équipier';
 
   const handleClearAllExpenses = async () => {
     if (isClearingExpenses) return;
@@ -698,7 +704,7 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
           ) : (
             personStats.map(({ friend, paid, share, balance }) => {
               const isCreditor = balance >= -0.005;
-              const name = friend.id === currentFriendId ? `Moi (${friend.name})` : friend.name;
+              const name = friend.id === authorId ? `Moi (${friend.name})` : friend.name;
               const lines = getPersonExpenseLines(friend.id, regularExpenses, friendIds);
 
               return (
@@ -1129,7 +1135,7 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
                     }`}
                   >
                     <img src={f.avatar} alt="" className="h-4 w-4 rounded-full object-cover" />
-                    {f.id === currentFriendId ? 'Moi' : f.name}
+                    {f.id === authorId ? 'Moi' : f.name}
                   </button>
                 ))}
               </div>
@@ -1182,7 +1188,7 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
                       }`}
                     >
                       <img src={f.avatar} alt="" className="h-4 w-4 rounded-full object-cover" />
-                      {f.id === currentFriendId ? 'Moi' : f.name}
+                      {f.id === authorId ? 'Moi' : f.name}
                       {isIncluded && splitType === 'equal' && personAmount > 0 && (
                         <span className="font-mono text-[9px] text-emerald-700">
                           {formatMoney(personAmount, currency)}
@@ -1206,7 +1212,7 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
                         >
                           <img src={f.avatar} alt="" className="h-4 w-4 shrink-0 rounded-full object-cover" />
                           <span className="min-w-0 flex-1 truncate text-[10px] font-bold text-[#17352b]">
-                            {f.id === currentFriendId ? 'Moi' : f.name}
+                            {f.id === authorId ? 'Moi' : f.name}
                           </span>
 
                           {splitType === 'shares' && (

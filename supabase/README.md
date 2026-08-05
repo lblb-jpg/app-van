@@ -12,6 +12,7 @@ Scripts utilitaires :
 
 - `live_locations_and_invite.sql` — positions live + codes d’invitation
 - `add_waypoint_photo_urls.sql` — photos sur les étapes
+- `add_video_storage.sql` — autoriser les vidéos dans Storage (erreur 400 à l’upload)
 - `reset_data_keep_users.sql` — reset données, conserve les users
 
 ## Sync

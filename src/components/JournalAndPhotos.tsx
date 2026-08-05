@@ -251,6 +251,7 @@ interface JournalAndPhotosProps {
   photos: TripPhoto[];
   friends: Friend[];
   currentFriendId: string;
+  authorId: string;
   userLocation: GpsPoint | null;
   onAddNote: (newNote: Omit<JournalNote, 'id'>) => void;
   onAddPhoto: (newPhoto: Omit<TripPhoto, 'id'>) => void;
@@ -262,6 +263,7 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   photos,
   friends,
   currentFriendId,
+  authorId,
   userLocation,
   onAddNote,
   onAddPhoto,
@@ -305,7 +307,7 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
       title: noteTitle.trim(),
       content: noteContent.trim(),
       date: new Date().toISOString().split('T')[0],
-      friendId: currentFriendId,
+      friendId: authorId,
       locationName: noteLocation.trim(),
       lat: noteCoords?.lat,
       lng: noteCoords?.lng,
@@ -328,7 +330,7 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
       url: photoUrlInput.trim(),
       caption: photoCaption.trim(),
       date: new Date().toISOString().split('T')[0],
-      friendId: currentFriendId,
+      friendId: authorId,
       locationName: photoLocation.trim(),
       lat: photoCoords?.lat,
       lng: photoCoords?.lng,
@@ -351,7 +353,7 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
       url: videoUrlInput.trim(),
       caption: videoCaption.trim(),
       date: new Date().toISOString().split('T')[0],
-      friendId: currentFriendId,
+      friendId: authorId,
       locationName: videoLocation.trim(),
       lat: videoCoords?.lat,
       lng: videoCoords?.lng,

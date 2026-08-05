@@ -96,7 +96,7 @@ values (
   'trip-photos',
   true,
   52428800,
-  array['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+  array['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v', 'video/mov']
 )
 on conflict (id) do update
 set public = excluded.public,

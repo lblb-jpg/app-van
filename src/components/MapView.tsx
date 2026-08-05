@@ -44,6 +44,7 @@ interface MapViewProps {
   pois: Poi[];
   friends: Friend[];
   currentFriendId: string;
+  authorId: string;
   photos: TripPhoto[];
   waypoints: Waypoint[];
   journal?: JournalNote[];
@@ -122,6 +123,7 @@ export const MapView: React.FC<MapViewProps> = ({
   pois,
   friends,
   currentFriendId,
+  authorId,
   activeTrackPoints = [],
   pastTracks = [],
   photos,
@@ -589,7 +591,7 @@ export const MapView: React.FC<MapViewProps> = ({
       type: newPoiType,
       lat: clickCoords.lat,
       lng: clickCoords.lng,
-      createdByFriendId: currentFriendId,
+      createdByFriendId: authorId,
       amenities: newPoiAmenities,
     });
 
