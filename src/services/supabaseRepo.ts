@@ -1282,16 +1282,63 @@ export async function updateOwnProfile(
   ctx: CloudContext,
   patch: { name?: string; avatar?: string; color?: string; role?: string }
 ) {
+  let avatarUrl = patch.avatar;
+  if (avatarUrl && (avatarUrl.startsWith('data:') || avatarUrl.startsWith('blob:'))) {
+    const path = await uploadPhotoBlob(
+      ctx.supabase,
+      ctx.tripId,
+      ctx.user.id,
+      avatarUrl,
+      'avatar.jpg'
+    );
+    avatarUrl = await resolvePhotoUrl(path, ctx.supabase);
+  }
+
   const { error } = await ctx.supabase
     .from('profiles')
     .update({
       name: patch.name,
-      avatar_url: patch.avatar,
+      avatar_url: avatarUrl,
       color: patch.color,
       role_label: patch.role,
     })
     .eq('id', ctx.user.id);
   if (error) throw error;
+  return avatarUrl;
+}
+
+/** Migre les avatars data: URL (lourds) vers Storage public — accélère tout le chargement. */
+export async function migrateProfileAvatarsToStorage(ctx: CloudContext) {
+  const { data: members, error } = await ctx.supabase
+    .from('trip_members')
+    .select('user_id, profiles(id, avatar_url)')
+    .eq('trip_id', ctx.tripId);
+  if (error || !members) return;
+
+  for (const row of members) {
+    const profile = row.profiles as { id?: string; avatar_url?: string } | null;
+    const avatar = profile?.avatar_url;
+    const userId = row.user_id as string;
+    if (!avatar?.startsWith('data:image/') || userId !== ctx.user.id) continue;
+
+    try {
+      const path = await uploadPhotoBlob(
+        ctx.supabase,
+        ctx.tripId,
+        ctx.user.id,
+        avatar,
+        'avatar.jpg'
+      );
+      const publicUrl = await resolvePhotoUrl(path, ctx.supabase);
+      await ctx.supabase
+        .from('profiles')
+        .update({ avatar_url: publicUrl })
+        .eq('id', ctx.user.id);
+      await ctx.supabase.auth.updateUser({ data: { avatar_url: publicUrl } });
+    } catch (err) {
+      console.warn('Avatar migration failed', err);
+    }
+  }
 }
 
 async function loadMemberLookup(ctx: CloudContext): Promise<MemberLookup> {

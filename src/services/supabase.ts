@@ -133,7 +133,11 @@ async function upsertProfileName(supabase: SupabaseClient, userId: string, name:
     .eq('id', userId)
     .maybeSingle();
 
-  const avatarUrl = resolveFriendAvatar(name, color, existing?.avatar_url);
+  // Keep a real cloud photo if present; never invent a huge data: URL for auth metadata.
+  const existingAvatar = existing?.avatar_url || '';
+  const avatarUrl = existingAvatar.startsWith('http')
+    ? existingAvatar
+    : resolveFriendAvatar(name, color, existingAvatar || null);
 
   const { error } = await supabase.from('profiles').upsert(
     {
@@ -147,7 +151,10 @@ async function upsertProfileName(supabase: SupabaseClient, userId: string, name:
   if (error) {
     await supabase.from('profiles').update({ name, color, avatar_url: avatarUrl }).eq('id', userId);
   }
-  await supabase.auth.updateUser({ data: { name, avatar_url: avatarUrl } });
+  // JWT must stay small — only short https URLs (or empty).
+  const metaAvatar =
+    avatarUrl.startsWith('http://') || avatarUrl.startsWith('https://') ? avatarUrl : '';
+  await supabase.auth.updateUser({ data: { name, avatar_url: metaAvatar } });
 }
 
 /**

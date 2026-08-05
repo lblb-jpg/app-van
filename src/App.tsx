@@ -32,6 +32,8 @@ import {
   loadTripBundle,
   mergeLiveLocationsIntoFriends,
   type LoadTripBundleOptions,
+  migrateProfileAvatarsToStorage,
+  saveCrewInviteCode,
   syncLocalDataToCloud,
   verifyCloudSchema,
   reorderWaypoint as cloudReorderWaypoint,
@@ -61,6 +63,7 @@ import { startGeolocationWatch, type GeoStatus } from './services/geolocation';
 import { toUserFacingError } from './lib/userFacingError';
 import {
   hydrateFriendAvatars,
+  pickDisplayAvatar,
   readCrewCustomization,
   resolveFriendAvatar,
   writeCrewCustomization,
@@ -68,7 +71,6 @@ import {
 } from './lib/crewAvatars';
 import {
   CREW_MEMBER_NAMES,
-  backfillCrewProfileAvatars,
   ensureCrewSession,
   getStoredCrewUserMap,
   isCrewMemberName,
@@ -84,6 +86,8 @@ const MapView = lazy(() =>
 );
 const ACTIVE_TAB_KEY = 'van_active_tab_v1';
 const CREW_CUSTOMIZATIONS_KEY = 'van_crew_customizations_v1';
+/** Voyage équipage reconstruit — Adel / Paul / Yanis (éditeurs). */
+const SHARED_CREW_INVITE = 'ACF77E77';
 const VALID_TABS: TabType[] = ['map', 'sleep', 'waypoints', 'journal', 'budget', 'profile'];
 
 function readCrewCustomizations(): Record<string, CrewCustomization> {
@@ -229,14 +233,11 @@ export default function App() {
       crewAccountNamesRef.current[friend.id] = name;
       const customization = readCrewCustomization(crewCustomizationsRef.current, friend.id, name);
       const displayName = customization?.name?.trim() || friend.name;
+      // Cloud photo wins — local customization must not hide the real profile photo.
       return [{
         ...friend,
         name: displayName,
-        avatar: resolveFriendAvatar(
-          displayName,
-          friend.color,
-          customization?.avatar || friend.avatar
-        ),
+        avatar: pickDisplayAvatar(friend.avatar, customization?.avatar, displayName, friend.color),
       }];
     });
     const visibleFriends = crewFriends.length ? crewFriends : bundle.friends;
@@ -380,12 +381,33 @@ export default function App() {
 
   useEffect(() => {
     async function init() {
+      // Force le voyage partagé sain (base reset ACF77E77).
+      const RESET_STAMP = 'crew_clean_acf77e77_v1';
+      const alreadyReset = localStorage.getItem('van_db_reset_stamp_v1') === RESET_STAMP;
+      saveCrewInviteCode(SHARED_CREW_INVITE);
+      try {
+        localStorage.removeItem(CREW_CUSTOMIZATIONS_KEY);
+        localStorage.removeItem('van_current_trip_id_v1');
+        crewCustomizationsRef.current = {};
+      } catch {
+        // ignore
+      }
+
+      // Une fois après reset cloud : vide le cache local (évite de réinjecter d’anciennes données).
+      if (!alreadyReset) {
+        await dbService.clearAllLocalTripData();
+        localStorage.setItem('van_db_reset_stamp_v1', RESET_STAMP);
+      }
+
       await loadLocalCache();
       setBooting(false);
 
       if (isCloudConfigured()) {
-        void connectCloud({ migrateLocal: true });
-        void backfillCrewProfileAvatars();
+        void connectCloud({ migrateLocal: false }).then((ok) => {
+          if (ok && cloudRef.current) {
+            void migrateProfileAvatarsToStorage(cloudRef.current);
+          }
+        });
       }
     }
     void init();
@@ -398,24 +420,25 @@ export default function App() {
     let refreshTimer: number | undefined;
     let refreshing = false;
 
-    const refreshTripBundle = async (includeTrackPoints = false) => {
+    const refreshTripBundle = async (opts?: { tracks?: boolean; showSpinner?: boolean }) => {
       if (refreshing) return;
       refreshing = true;
-      setCloudSyncing(true);
+      if (opts?.showSpinner) setCloudSyncing(true);
       try {
-        await refreshFromCloud(ctx, { includeTrackPoints });
+        // Never pull GPS track points on background refresh — too slow.
+        await refreshFromCloud(ctx, { includeTrackPoints: Boolean(opts?.tracks) });
       } catch (err) {
         console.warn('Trip refresh failed', err);
       } finally {
         refreshing = false;
-        setCloudSyncing(false);
+        if (opts?.showSpinner) setCloudSyncing(false);
       }
     };
 
     const scheduleRefresh = () => {
       window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => {
-        void refreshTripBundle(tracksLoadedRef.current);
+        void refreshTripBundle({ tracks: false, showSpinner: false });
       }, SYNC_DEBOUNCE_MS);
     };
 
@@ -508,7 +531,7 @@ export default function App() {
     }, powerProfile.liveLocationPollMs);
 
     const fullSyncInterval = window.setInterval(() => {
-      void refreshTripBundle();
+      void refreshTripBundle({ tracks: false, showSpinner: false });
     }, powerProfile.fullSyncMs);
 
     const onVisibilityChange = () => {
@@ -649,7 +672,8 @@ export default function App() {
       return;
     }
     setCloudSyncing(true);
-    void refreshFromCloud(ctx, { includeTrackPoints: true })
+    // Refresh rapide : données métier seulement (pas les points GPS).
+    void refreshFromCloud(ctx, { includeTrackPoints: false })
       .catch((err) => console.warn('Manual refresh failed', err))
       .finally(() => setCloudSyncing(false));
   };
@@ -701,10 +725,38 @@ export default function App() {
     if (ctx && ctx.user.id === friendId) {
       setSavingProfile(true);
       try {
-        await updateOwnProfile(ctx, { name: patch.name, avatar: patch.avatar });
-        await ctx.supabase.auth.updateUser({
-          data: { name: patch.name, avatar_url: patch.avatar },
+        const savedAvatar = await updateOwnProfile(ctx, {
+          name: patch.name,
+          avatar: patch.avatar,
         });
+        const finalAvatar = savedAvatar || patch.avatar;
+        // Never put data:/blob: into JWT metadata — blows up token size → Storage 400 + sync lente.
+        const metaAvatar =
+          finalAvatar && (finalAvatar.startsWith('http://') || finalAvatar.startsWith('https://'))
+            ? finalAvatar
+            : '';
+        await ctx.supabase.auth.updateUser({
+          data: { name: patch.name, avatar_url: metaAvatar },
+        });
+        if (finalAvatar !== patch.avatar) {
+          const synced = friends.map((candidate) =>
+            candidate.id === friendId
+              ? { ...candidate, name: patch.name, avatar: finalAvatar }
+              : candidate
+          );
+          setFriends(synced);
+          await dbService.saveFriends(synced);
+          crewCustomizationsRef.current = writeCrewCustomization(
+            crewCustomizationsRef.current,
+            friendId,
+            crewName,
+            { name: patch.name, avatar: finalAvatar }
+          );
+          localStorage.setItem(
+            CREW_CUSTOMIZATIONS_KEY,
+            JSON.stringify(crewCustomizationsRef.current)
+          );
+        }
       } finally {
         setSavingProfile(false);
       }
@@ -1127,7 +1179,7 @@ export default function App() {
         isOpen={isAuthModalOpen}
         allowDismiss
         onClose={() => setIsAuthModalOpen(false)}
-        onAuthenticated={() => void connectCloud({ migrateLocal: true })}
+        onAuthenticated={() => void connectCloud({ migrateLocal: false })}
       />
     </div>
   );

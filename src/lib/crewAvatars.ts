@@ -35,11 +35,37 @@ export function isPlaceholderAvatar(url?: string | null) {
   return url.startsWith('data:image/svg');
 }
 
+/** Photo réelle = URL http(s) ou data JPEG/PNG (pas le SVG initiales). */
+export function isRealAvatar(url?: string | null) {
+  if (!url?.trim()) return false;
+  if (isPlaceholderAvatar(url)) return false;
+  return (
+    url.startsWith('http://') ||
+    url.startsWith('https://') ||
+    url.startsWith('data:image/jpeg') ||
+    url.startsWith('data:image/png') ||
+    url.startsWith('data:image/webp') ||
+    url.startsWith('blob:')
+  );
+}
+
 export function resolveFriendAvatar(name: string, color: string, avatarUrl?: string | null) {
-  if (!isPlaceholderAvatar(avatarUrl) && avatarUrl) return avatarUrl;
+  if (isRealAvatar(avatarUrl)) return avatarUrl as string;
   const crewName = matchCrewMemberName(name);
   if (crewName) return CREW_DEFAULT_AVATARS[crewName];
   return makeInitialAvatar(name, color);
+}
+
+/** Prefers cloud photo; local customization only if cloud has nothing real. */
+export function pickDisplayAvatar(
+  cloudAvatar: string | undefined | null,
+  localAvatar: string | undefined | null,
+  name: string,
+  color: string
+) {
+  if (isRealAvatar(cloudAvatar)) return cloudAvatar as string;
+  if (isRealAvatar(localAvatar)) return localAvatar as string;
+  return resolveFriendAvatar(name, color, null);
 }
 
 export function readCrewCustomization(

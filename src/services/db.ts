@@ -75,7 +75,22 @@ export async function saveData<T>(key: string, value: T): Promise<void> {
 }
 
 // Concrete helper getters & setters
+export async function clearAllLocalTripData() {
+  const emptyFriends = DEFAULT_FRIENDS;
+  await Promise.all([
+    saveData(KEYS.FRIENDS, emptyFriends),
+    saveData(KEYS.POIS, []),
+    saveData(KEYS.JOURNAL, []),
+    saveData(KEYS.EXPENSES, []),
+    saveData(KEYS.PHOTOS, []),
+    saveData(KEYS.WAYPOINTS, []),
+    saveData(KEYS.TRACKS, []),
+  ]);
+}
+
 export const dbService = {
+  clearAllLocalTripData,
+
   getFriends: () => loadData<Friend[]>(KEYS.FRIENDS, DEFAULT_FRIENDS),
   saveFriends: (friends: Friend[]) => saveData(KEYS.FRIENDS, friends),
 
