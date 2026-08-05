@@ -122,7 +122,8 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   // New Note Form State
   const [noteTitle, setNoteTitle] = useState('');
   const [noteContent, setNoteContent] = useState('');
-  const [noteLocation, setNoteLocation] = useState('Lac d\'Annecy');
+  const [noteLocation, setNoteLocation] = useState('');
+  const [noteCoords, setNoteCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [notePhotoUrl, setNotePhotoUrl] = useState('');
 
   // New Photo Form State
@@ -142,11 +143,15 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
       date: new Date().toISOString().split('T')[0],
       friendId: currentFriendId,
       locationName: noteLocation.trim(),
+      lat: noteCoords?.lat,
+      lng: noteCoords?.lng,
       photos: notePhotoUrl.trim() ? [notePhotoUrl.trim()] : []
     });
 
     setNoteTitle('');
     setNoteContent('');
+    setNoteLocation('');
+    setNoteCoords(null);
     setNotePhotoUrl('');
     setNoteStep(1);
     setShowNoteModal(false);
@@ -211,6 +216,44 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   const previewAuthor = selectedPhotoPreview
     ? friends.find((f) => f.id === selectedPhotoPreview.friendId)
     : undefined;
+
+  useEffect(() => {
+    if (!showNoteModal) return;
+
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const applyCoords = async (lat: number, lng: number) => {
+      if (cancelled) return;
+      setNoteCoords({ lat, lng });
+      setLocationLoading(true);
+      try {
+        const city = await reverseGeocodeCity(lat, lng, controller.signal);
+        if (!cancelled && city) setNoteLocation(city);
+      } catch {
+        // Keep manual entry if reverse geocoding fails.
+      } finally {
+        if (!cancelled) setLocationLoading(false);
+      }
+    };
+
+    if (userLocation) {
+      void applyCoords(userLocation.lat, userLocation.lng);
+    } else if (isGeolocationAvailable()) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => void applyCoords(position.coords.latitude, position.coords.longitude),
+        () => {
+          if (!cancelled) setLocationLoading(false);
+        },
+        { enableHighAccuracy: true, timeout: 12_000, maximumAge: 60_000 }
+      );
+    }
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [showNoteModal, userLocation]);
 
   useEffect(() => {
     if (!showPhotoModal) return;
@@ -466,6 +509,8 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
         isOpen={showNoteModal}
         onClose={() => {
           setNoteStep(1);
+          setNoteLocation('');
+          setNoteCoords(null);
           setShowNoteModal(false);
         }}
         title="Nouvelle note"
@@ -502,7 +547,7 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
               <span className="text-[11px] font-bold text-[#17352b]">Lieu / Étape</span>
               <input
                 type="text"
-                placeholder="ex: Lac d'Annecy"
+                placeholder={locationLoading ? 'Localisation en cours…' : 'ex: Lac d\'Annecy'}
                 value={noteLocation}
                 onChange={(e) => setNoteLocation(e.target.value)}
                 className="w-full text-sm font-medium px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
@@ -631,7 +676,7 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
       {/* Immersive photo viewer */}
       {selectedPhotoPreview && (
         <div
-          className="fixed inset-0 z-50 flex flex-col bg-zinc-950/95 backdrop-blur-xl"
+          className="fixed inset-0 z-[180] flex flex-col bg-zinc-950/95 backdrop-blur-xl"
           role="dialog"
           aria-modal="true"
           aria-label={selectedPhotoPreview.caption || 'Aperçu photo'}

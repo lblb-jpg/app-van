@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Map,
   Navigation as GpsIcon,
@@ -25,6 +26,7 @@ import { TabType, Friend } from '../types';
 import { isIosDevice, isStandalonePwa } from '../lib/pwa';
 import type { GeoStatus } from '../services/geolocation';
 import { wasGeoGranted } from '../lib/permissions';
+import { ModalShell } from './ModalShell';
 
 interface NavigationProps {
   activeTab: TabType;
@@ -138,7 +140,7 @@ export const Navigation: React.FC<NavigationProps> = ({
 
   return (
     <>
-      <header className="van-header shrink-0 z-40 w-full px-3 pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-6 sm:pt-[max(0.75rem,env(safe-area-inset-top))]">
+      <header className="van-header w-full px-3 pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-6 sm:pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="van-header__inner mx-auto flex max-w-6xl items-center justify-between rounded-[1.35rem] px-3 py-2 sm:rounded-[1.6rem] sm:px-4 sm:py-2.5">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="van-brand-mark relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[1rem] text-white sm:h-11 sm:w-11 sm:rounded-[1.1rem]">
@@ -240,7 +242,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       </header>
 
       {showInstallHint && !standalone && (
-        <div className="mx-3 mt-2 sm:mx-6">
+        <div className="fixed inset-x-0 top-[var(--van-header-h)] z-40 px-3 sm:px-6">
           <div className="van-install-sheet flex flex-wrap items-center gap-3 rounded-2xl px-3.5 py-3">
             <div className="w-9 h-9 rounded-xl bg-[#17352b] text-white flex items-center justify-center shrink-0">
               <Download className="w-4 h-4" />
@@ -270,53 +272,51 @@ export const Navigation: React.FC<NavigationProps> = ({
         </div>
       )}
 
-      {showIosHelp && (
-        <div className="fixed inset-0 z-50 bg-[#17352b]/40 backdrop-blur-xs flex items-end sm:items-center justify-center p-4">
-          <div className="w-full max-w-sm van-install-sheet rounded-[1.75rem] p-5 space-y-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="font-extrabold text-base text-[#17352b]">Ajouter à l’écran d’accueil</h3>
-                <p className="text-[12px] text-[#6f786f] font-medium mt-1 leading-relaxed">
-                  Pour l’utiliser comme une vraie app mobile.
-                </p>
-              </div>
-              <button type="button" onClick={() => setShowIosHelp(false)} className="touch-target flex items-center justify-center min-h-11 min-w-11 text-[#6f786f]">
-                <X className="w-5 h-5" />
-              </button>
+      <ModalShell isOpen={showIosHelp} onClose={() => setShowIosHelp(false)} maxWidth="sm">
+        <div className="p-5 space-y-4 sm:p-6">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="font-extrabold text-base text-[#17352b]">Ajouter à l’écran d’accueil</h3>
+              <p className="text-[12px] text-[#6f786f] font-medium mt-1 leading-relaxed">
+                Pour l’utiliser comme une vraie app mobile.
+              </p>
             </div>
-            <ol className="space-y-2.5">
-              {[
-                { icon: <Share className="w-4 h-4" />, text: 'Touche Partager (carré avec flèche)' },
-                { icon: <Plus className="w-4 h-4" />, text: 'Choisis « Sur l’écran d’accueil »' },
-                { icon: <Download className="w-4 h-4" />, text: 'Valide — l’icône Vanlife Club apparaît' },
-              ].map((step, i) => (
-                <li
-                  key={i}
-                  className="flex items-center gap-3 rounded-2xl bg-[#f5f1e7] px-3 py-2.5 text-[12px] font-semibold text-[#17352b]"
-                >
-                  <span className="w-8 h-8 rounded-xl bg-white flex items-center justify-center text-[#eb6c32] shrink-0">
-                    {step.icon}
-                  </span>
-                  <span>
-                    <span className="text-[10px] font-bold text-[#6f786f] mr-1">{i + 1}.</span>
-                    {step.text}
-                  </span>
-                </li>
-              ))}
-            </ol>
-            <button
-              type="button"
-              onClick={dismissInstall}
-              className="w-full py-3 rounded-2xl bg-[#17352b] text-white text-xs font-bold"
-            >
-              Compris
+            <button type="button" onClick={() => setShowIosHelp(false)} className="touch-target flex items-center justify-center min-h-11 min-w-11 text-[#6f786f]">
+              <X className="w-5 h-5" />
             </button>
           </div>
+          <ol className="space-y-2.5">
+            {[
+              { icon: <Share className="w-4 h-4" />, text: 'Touche Partager (carré avec flèche)' },
+              { icon: <Plus className="w-4 h-4" />, text: 'Choisis « Sur l’écran d’accueil »' },
+              { icon: <Download className="w-4 h-4" />, text: 'Valide — l’icône Vanlife Club apparaît' },
+            ].map((step, i) => (
+              <li
+                key={i}
+                className="flex items-center gap-3 rounded-2xl bg-[#f5f1e7] px-3 py-2.5 text-[12px] font-semibold text-[#17352b]"
+              >
+                <span className="w-8 h-8 rounded-xl bg-white flex items-center justify-center text-[#eb6c32] shrink-0">
+                  {step.icon}
+                </span>
+                <span>
+                  <span className="text-[10px] font-bold text-[#6f786f] mr-1">{i + 1}.</span>
+                  {step.text}
+                </span>
+              </li>
+            ))}
+          </ol>
+          <button
+            type="button"
+            onClick={dismissInstall}
+            className="w-full py-3 rounded-2xl bg-[#17352b] text-white text-xs font-bold pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+          >
+            Compris
+          </button>
         </div>
-      )}
+      </ModalShell>
 
       {(showGeoToast || showSyncToast) && (
-        <div className="fixed inset-x-0 bottom-[calc(3.85rem+env(safe-area-inset-bottom))] z-40 px-3 pointer-events-none sm:bottom-[calc(4.25rem+env(safe-area-inset-bottom))]">
+        <div className="fixed inset-x-0 bottom-[var(--van-bottom-nav-h)] z-40 px-3 pointer-events-none">
           <div className="mx-auto max-w-3xl space-y-2 pointer-events-auto">
             {showSyncToast && (
               <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 shadow-lg">
@@ -373,9 +373,9 @@ export const VanBottomNav: React.FC<VanBottomNavProps> = ({
     { id: 'radar', label: 'Radar', icon: <Radio /> },
   ];
 
-  return (
-    <nav className="van-bottom-nav shrink-0" aria-label="Navigation principale">
-      <div className="flex w-full items-stretch justify-around gap-0.5 px-1 py-2 sm:gap-1 sm:px-2 sm:py-2.5">
+  const nav = (
+    <nav className="van-bottom-nav" aria-label="Navigation principale">
+      <div className="flex w-full items-stretch justify-around gap-0.5 px-1 py-1.5 sm:gap-1 sm:px-2 sm:py-2">
         {navItems.map((item) => {
           const isActive = activeTab === item.id;
           return (
@@ -384,12 +384,13 @@ export const VanBottomNav: React.FC<VanBottomNavProps> = ({
               type="button"
               onClick={() => setActiveTab(item.id)}
               aria-current={isActive ? 'page' : undefined}
-              className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl py-2 sm:rounded-[1.1rem]"
+              aria-label={item.label}
+              className="van-nav-item relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 py-1.5 sm:rounded-[1.1rem]"
             >
               {isActive && (
                 <motion.span
                   layoutId="van-nav-bubble"
-                  className="absolute inset-0 rounded-xl bg-[#17352b] shadow-[0_6px_16px_rgba(23,53,43,.2)] sm:rounded-[1.1rem]"
+                  className="van-nav-item__bubble absolute inset-0 rounded-xl bg-[#17352b] shadow-[0_6px_16px_rgba(23,53,43,.2)] sm:rounded-[1.1rem]"
                   transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.6 }}
                 />
               )}
@@ -401,7 +402,7 @@ export const VanBottomNav: React.FC<VanBottomNavProps> = ({
                   }`,
                 })}
                 {item.badge && (
-                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-white animate-pulse" />
+                  <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white animate-pulse" />
                 )}
               </span>
 
@@ -418,4 +419,10 @@ export const VanBottomNav: React.FC<VanBottomNavProps> = ({
       </div>
     </nav>
   );
+
+  if (typeof document !== 'undefined') {
+    return createPortal(nav, document.body);
+  }
+
+  return nav;
 };

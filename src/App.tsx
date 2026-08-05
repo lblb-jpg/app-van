@@ -1016,7 +1016,7 @@ export default function App() {
         <button
           type="button"
           onClick={() => void walkie.unlockAudio()}
-          className="fixed left-1/2 top-[4.6rem] z-[80] flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-2 truncate rounded-full bg-[#eb6c32] px-3 py-2 text-[11px] font-extrabold text-white shadow-[0_12px_30px_rgba(235,108,50,.35)] ring-1 ring-white/10"
+          className="fixed left-1/2 top-[calc(var(--van-header-h)+0.35rem)] z-[60] flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-2 truncate rounded-full bg-[#eb6c32] px-3 py-2 text-[11px] font-extrabold text-white shadow-[0_12px_30px_rgba(235,108,50,.35)] ring-1 ring-white/10"
         >
           <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-white" />
           <span className="truncate">Activer la radio pour entendre l’équipage</span>
@@ -1030,7 +1030,7 @@ export default function App() {
             void walkie.unlockAudio();
             setActiveTab('radio');
           }}
-          className="fixed left-1/2 top-[4.6rem] z-[80] flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-2 truncate rounded-full bg-[#17352b] px-3 py-2 text-[11px] font-extrabold text-white shadow-[0_12px_30px_rgba(23,53,43,.35)] ring-1 ring-white/10"
+          className="fixed left-1/2 top-[calc(var(--van-header-h)+0.35rem)] z-[60] flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-2 truncate rounded-full bg-[#17352b] px-3 py-2 text-[11px] font-extrabold text-white shadow-[0_12px_30px_rgba(23,53,43,.35)] ring-1 ring-white/10"
         >
           <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[#eb6c32]" />
           <span className="truncate">{walkie.activeSpeaker.name} parle en radio</span>
@@ -1039,7 +1039,7 @@ export default function App() {
 
       <main
         ref={mainRef}
-        className={`page-surface min-h-0 flex-1 w-full ${
+        className={`page-surface van-main-inset min-h-0 flex-1 w-full ${
           activeTab === 'radio' || activeTab === 'map' ? 'overflow-hidden' : 'overflow-y-auto'
         }`}
       >

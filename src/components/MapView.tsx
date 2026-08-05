@@ -638,7 +638,7 @@ export const MapView: React.FC<MapViewProps> = ({
       )}
 
       {/* Floating actions: add POI + recenter */}
-      <div className="absolute bottom-[calc(7.25rem+env(safe-area-inset-bottom))] right-4 z-10 flex flex-col gap-2">
+      <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-2">
         <button
           type="button"
           onClick={openAddPoiForm}
@@ -660,7 +660,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
       {/* Pick location banner */}
       {isPickingLocation && (
-        <div className="absolute inset-x-3 bottom-[calc(7.25rem+env(safe-area-inset-bottom))] z-20 pointer-events-none">
+        <div className="absolute inset-x-3 bottom-4 z-20 pointer-events-none">
           <div className="mx-auto max-w-sm rounded-2xl bg-[#17352b] text-white px-4 py-3 shadow-xl pointer-events-auto flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
