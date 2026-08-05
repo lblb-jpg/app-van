@@ -16,6 +16,12 @@ import { GpsTrack, GpsPoint } from '../types';
 import { downloadGpxFile, parseGpxXml } from '../services/gpx';
 import { formatDistanceKm, maxSpeedKmH } from '../services/gpsMetrics';
 import type { GeoStatus } from '../services/geolocation';
+import { StepFormModal } from './StepFormModal';
+
+const SAVE_TRACK_STEPS = [
+  { id: 1, label: 'Récap', hint: 'Statistiques GPS' },
+  { id: 2, label: 'Nom', hint: 'Nommer la trace' },
+] as const;
 
 interface GpsTrackerProps {
   isRecording: boolean;
@@ -64,6 +70,7 @@ export const GpsTracker: React.FC<GpsTrackerProps> = ({
 }) => {
   const [trackTitleInput, setTrackTitleInput] = useState('');
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [saveStep, setSaveStep] = useState(1);
 
   const distance = formatDistanceKm(totalDistanceKm);
   const gpsReady = geoStatus.state === 'ready';
@@ -79,6 +86,7 @@ export const GpsTracker: React.FC<GpsTrackerProps> = ({
 
   const handleFinishClick = () => {
     setTrackTitleInput(`Étape Van - ${new Date().toLocaleDateString('fr-FR')}`);
+    setSaveStep(1);
     setShowSaveModal(true);
   };
 
@@ -331,52 +339,72 @@ export const GpsTracker: React.FC<GpsTrackerProps> = ({
         )}
       </div>
 
-      {showSaveModal && (
-        <div className="fixed inset-0 z-50 bg-zinc-950/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-white rounded-[2rem] p-6 shadow-2xl border border-zinc-200 animate-in fade-in zoom-in-95">
-            <h3 className="font-bold text-sm text-zinc-900 mb-2">Sauvegarder la Trace GPS</h3>
-            <form onSubmit={handleConfirmSave} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-bold text-zinc-700 mb-1">Nom de la trace</label>
-                <input
-                  type="text"
-                  required
-                  value={trackTitleInput}
-                  onChange={(e) => setTrackTitleInput(e.target.value)}
-                  className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-zinc-200 focus:outline-hidden focus:ring-2 focus:ring-zinc-900 bg-zinc-50"
-                />
+      <StepFormModal
+        isOpen={showSaveModal}
+        onClose={() => {
+          setSaveStep(1);
+          setShowSaveModal(false);
+        }}
+        title="Sauvegarder la trace GPS"
+        subtitle="Enregistre ton parcours dans l'historique"
+        icon={<History className="w-5 h-5" />}
+        iconBgClassName="bg-zinc-950"
+        steps={SAVE_TRACK_STEPS}
+        currentStep={saveStep}
+        onStepClick={setSaveStep}
+        canAdvanceFromStep={(step) => (step === 1 ? true : Boolean(trackTitleInput.trim()))}
+        onNext={() => setSaveStep(2)}
+        onPrevious={() => setSaveStep(1)}
+        onSubmit={handleConfirmSave}
+        submitLabel="Confirmer et enregistrer"
+        titleId="save-track-title"
+      >
+        {saveStep === 1 && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 space-y-2">
+              <p className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-800">Statistiques de la trace</p>
+              <p className="text-2xl font-black text-emerald-900">
+                {distance.value} <span className="text-base font-bold">{distance.unit}</span>
+              </p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-emerald-800">
+                <span>⏱ {formatTime(elapsedSeconds)}</span>
+                <span>📍 {activeTrackPoints.length} points GPS</span>
+                <span>🚀 Max {Math.round(maxSpeedKmH(activeTrackPoints))} km/h</span>
+                {gpsAccuracyM != null && <span>🎯 ±{gpsAccuracyM} m</span>}
               </div>
-
-              <div className="text-xs text-emerald-800 bg-emerald-50 p-3 rounded-2xl border border-emerald-200 space-y-1">
-                <p>
-                  <strong>{distance.value} {distance.unit}</strong> · {formatTime(elapsedSeconds)} ·{' '}
-                  {activeTrackPoints.length} points GPS
-                </p>
-                <p className="text-emerald-700/80">
-                  Max {Math.round(maxSpeedKmH(activeTrackPoints))} km/h
-                  {gpsAccuracyM != null ? ` · précision ±${gpsAccuracyM} m` : ''}
-                </p>
-              </div>
-
-              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowSaveModal(false)}
-                  className="min-h-11 px-3 py-2 text-xs font-bold text-zinc-600 hover:bg-zinc-100 rounded-xl"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  className="min-h-11 px-4 py-2 text-xs font-bold bg-zinc-900 text-white rounded-xl shadow-xs hover:bg-zinc-800"
-                >
-                  Confirmer et Enregistrer
-                </button>
-              </div>
-            </form>
+            </div>
+            <div className="rounded-2xl border border-[#17352b]/10 bg-[#f5f1e7] px-3.5 py-3">
+              <p className="text-[11px] font-semibold leading-relaxed text-[#17352b]">
+                Tout est bon ? Passe à l’étape suivante pour nommer ta trace.
+              </p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+        {saveStep === 2 && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+            <div className="rounded-2xl border border-zinc-200 bg-zinc-950 p-4 text-white">
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-emerald-300">Récapitulatif</p>
+              <p className="mt-1 text-base font-extrabold">
+                {distance.value} {distance.unit} · {formatTime(elapsedSeconds)}
+              </p>
+              <p className="mt-0.5 text-[11px] font-medium text-zinc-400">
+                {activeTrackPoints.length} points · max {Math.round(maxSpeedKmH(activeTrackPoints))} km/h
+              </p>
+            </div>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-bold text-[#17352b]">Nom de la trace *</span>
+              <input
+                type="text"
+                autoFocus
+                required
+                value={trackTitleInput}
+                onChange={(e) => setTrackTitleInput(e.target.value)}
+                className="w-full text-sm font-semibold px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
+              />
+            </label>
+          </div>
+        )}
+      </StepFormModal>
     </div>
   );
 };

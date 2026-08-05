@@ -25,6 +25,7 @@ import { motion } from 'motion/react';
 import { TabType, Friend } from '../types';
 import { isIosDevice, isStandalonePwa } from '../lib/pwa';
 import type { GeoStatus } from '../services/geolocation';
+import { wasGeoGranted } from '../lib/permissions';
 
 interface NavigationProps {
   activeTab: TabType;
@@ -67,7 +68,14 @@ export const Navigation: React.FC<NavigationProps> = ({
   const hasFriends = Boolean(currentFriend);
 
   const geoErrorText = status.state === 'error' ? status.message : '';
-  const showGeoToast = Boolean(geoErrorText && geoErrorText !== dismissedGeoError);
+  const isPermissionNag =
+    /autorise|permission|localisation dans le navigateur/i.test(geoErrorText);
+  // Once GPS was accepted, ignore transient / non-permission errors as toast spam.
+  const showGeoToast = Boolean(
+    geoErrorText &&
+      geoErrorText !== dismissedGeoError &&
+      (isPermissionNag ? !wasGeoGranted() : true)
+  );
   const showSyncToast = Boolean(syncError);
 
   useEffect(() => {
@@ -358,7 +366,7 @@ export const Navigation: React.FC<NavigationProps> = ({
       {typeof document !== 'undefined' &&
         createPortal(
           <nav className="van-bottom-nav pointer-events-none" aria-label="Navigation principale">
-            <div className="flex w-full items-stretch justify-around gap-0.5 px-1 py-2 pb-[max(0.35rem,env(safe-area-inset-bottom))] pointer-events-auto sm:gap-1 sm:px-2 sm:pb-[max(0.45rem,env(safe-area-inset-bottom))]">
+            <div className="flex w-full items-stretch justify-around gap-0.5 px-1 py-2 pointer-events-auto sm:gap-1 sm:px-2 sm:py-2.5">
               {navItems.map((item) => {
                 const isActive = activeTab === item.id;
                 return (

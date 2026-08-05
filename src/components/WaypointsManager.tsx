@@ -25,8 +25,7 @@ const MAX_WAYPOINT_PHOTOS = 6;
 
 const ADD_STEPS = [
   { id: 1, label: 'Essentiel', hint: 'Nom et lieu' },
-  { id: 2, label: 'Position', hint: 'Coordonnées GPS' },
-  { id: 3, label: 'Détails', hint: 'Photos & confort' },
+  { id: 2, label: 'Détails', hint: 'GPS, photos & confort' },
 ] as const;
 
 const AMENITY_OPTIONS = [
@@ -475,7 +474,7 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
               </div>
 
               {/* Indicateur d'étapes */}
-              <div className="mt-4 grid grid-cols-3 gap-2">
+              <div className="mt-4 grid grid-cols-2 gap-2">
                 {ADD_STEPS.map((step) => {
                   const isDone = addStep > step.id;
                   const isCurrent = addStep === step.id;
@@ -568,19 +567,27 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
 
                 {addStep === 2 && (
                   <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+                    <div className="rounded-2xl border border-zinc-200 bg-zinc-950 p-4 text-white">
+                      <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-emerald-300">Récapitulatif</p>
+                      <p className="mt-1 truncate text-base font-extrabold">{title || 'Sans titre'}</p>
+                      <p className="mt-0.5 truncate text-[11px] font-medium text-zinc-300">{locationName || 'Lieu non renseigné'}</p>
+                      {vanSpotType && (
+                        <span className="mt-2 inline-block rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-bold text-emerald-200">
+                          🚐 {vanSpotType}
+                        </span>
+                      )}
+                    </div>
+
                     <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-xs">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="text-[11px] font-bold text-zinc-800">Position GPS</p>
+                          <p className="text-[11px] font-bold text-zinc-800">Position GPS *</p>
                           <p className="mt-1 font-mono text-[12px] font-semibold text-zinc-600">
                             {parseFloat(lat).toFixed(5)}, {parseFloat(lng).toFixed(5)}
                           </p>
                         </div>
                         <MapPin className="h-5 w-5 shrink-0 text-emerald-600" />
                       </div>
-                      <p className="mt-3 text-[10px] font-medium leading-relaxed text-zinc-500">
-                        Tu peux ajuster les coordonnées manuellement ou les reprendre depuis la carte plus tard.
-                      </p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -604,26 +611,6 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                           className="w-full rounded-2xl border border-zinc-200 bg-white px-3.5 py-3 font-mono text-sm text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-zinc-900"
                         />
                       </label>
-                    </div>
-                  </div>
-                )}
-
-                {addStep === 3 && (
-                  <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-                    <div className="rounded-2xl border border-zinc-200 bg-zinc-950 p-4 text-white">
-                      <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-emerald-300">Récapitulatif</p>
-                      <p className="mt-1 truncate text-base font-extrabold">{title || 'Sans titre'}</p>
-                      <p className="mt-0.5 truncate text-[11px] font-medium text-zinc-300">{locationName || 'Lieu non renseigné'}</p>
-                      <div className="mt-3 flex flex-wrap gap-1.5">
-                        {vanSpotType && (
-                          <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-bold text-emerald-200">
-                            🚐 {vanSpotType}
-                          </span>
-                        )}
-                        <span className="rounded-full bg-white/10 px-2.5 py-1 font-mono text-[10px] font-bold text-zinc-300">
-                          {parseFloat(lat).toFixed(4)}, {parseFloat(lng).toFixed(4)}
-                        </span>
-                      </div>
                     </div>
 
                     <label className="block space-y-1.5">

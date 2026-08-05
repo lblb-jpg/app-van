@@ -6,11 +6,16 @@ import {
   Locate, 
   Plus, 
   Filter,
-  X,
   Crosshair,
   Navigation2
 } from 'lucide-react';
 import { Poi, PoiType, Friend, GpsTrack, GpsPoint, TripPhoto, Waypoint } from '../types';
+import { StepFormModal } from './StepFormModal';
+
+const ADD_POI_STEPS = [
+  { id: 1, label: 'Essentiel', hint: 'Nom et type' },
+  { id: 2, label: 'Détails', hint: 'Lieu et confort' },
+] as const;
 
 interface MapViewProps {
   pois: Poi[];
@@ -98,6 +103,7 @@ export const MapView: React.FC<MapViewProps> = ({
   const [newPoiType, setNewPoiType] = useState<PoiType>('van_spot');
   const [newPoiAmenities, setNewPoiAmenities] = useState<string[]>(['eau', 'gratuit']);
   const [formError, setFormError] = useState('');
+  const [addPoiStep, setAddPoiStep] = useState(1);
 
   useEffect(() => {
     pickingLocationRef.current = isPickingLocation;
@@ -411,6 +417,27 @@ export const MapView: React.FC<MapViewProps> = ({
     setNewPoiType('van_spot');
     setNewPoiAmenities(['eau', 'gratuit']);
     setFormError('');
+    setAddPoiStep(1);
+  };
+
+  const canAdvancePoiStep = (step: number) => {
+    if (step === 1) return Boolean(newPoiTitle.trim());
+    if (step === 2) return Boolean(clickCoords);
+    return true;
+  };
+
+  const goToNextPoiStep = () => {
+    if (!canAdvancePoiStep(addPoiStep)) {
+      if (addPoiStep === 1) setFormError('Donne un nom au spot.');
+      return;
+    }
+    setFormError('');
+    setAddPoiStep((current) => Math.min(ADD_POI_STEPS.length, current + 1));
+  };
+
+  const goToPreviousPoiStep = () => {
+    setFormError('');
+    setAddPoiStep((current) => Math.max(1, current - 1));
   };
 
   const openAddPoiForm = () => {
@@ -638,34 +665,35 @@ export const MapView: React.FC<MapViewProps> = ({
         </div>
       )}
 
-      {/* Add POI form */}
+      {/* Add POI form — 2 étapes, rendu via portal pour éviter le clipping de la carte */}
       {showAddModal && clickCoords && (
-        <div className="fixed inset-0 z-50 bg-[#17352b]/35 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="w-full max-w-md max-h-[90dvh] overflow-y-auto bg-[#fffdf8] rounded-t-[1.75rem] sm:rounded-[2rem] p-5 sm:p-6 shadow-2xl border border-[#17352b]/10 animate-in fade-in slide-in-from-bottom-4 sm:zoom-in-95">
-            <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[#17352b]/15 sm:hidden" />
-
-            <div className="flex items-start justify-between gap-3 mb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-[#17352b] text-white flex items-center justify-center shadow-md">
-                  <MapPin className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-[#17352b] text-base leading-tight">Ajouter un point</h3>
-                  <p className="text-[11px] text-[#68756d] font-medium mt-0.5">Spot visible par tout l’équipage</p>
-                </div>
+        <StepFormModal
+          isOpen={showAddModal}
+          onClose={closeAddPoiForm}
+          title="Ajouter un point"
+          subtitle="Spot visible par tout l'équipage"
+          icon={<MapPin className="w-5 h-5" />}
+          steps={ADD_POI_STEPS}
+          currentStep={addPoiStep}
+          onStepClick={setAddPoiStep}
+          canAdvanceFromStep={canAdvancePoiStep}
+          onNext={goToNextPoiStep}
+          onPrevious={goToPreviousPoiStep}
+          onSubmit={handleCreatePoiSubmit}
+          submitLabel="Enregistrer le spot"
+          error={formError}
+          titleId="add-poi-title"
+        >
+          {addPoiStep === 1 && (
+            <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 px-3.5 py-3">
+                <p className="text-[11px] font-semibold leading-relaxed text-emerald-900">
+                  Commence par nommer ton spot et choisir son type — l’emplacement vient à l’étape suivante.
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={closeAddPoiForm}
-                className="touch-target flex items-center justify-center min-h-11 min-w-11 rounded-full text-[#68756d] hover:bg-[#17352b]/5"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            <form onSubmit={handleCreatePoiSubmit} className="space-y-4">
               <label className="block space-y-1.5">
-                <span className="text-[11px] font-bold text-[#17352b]">Nom du spot</span>
+                <span className="text-[11px] font-bold text-[#17352b]">Nom du spot *</span>
                 <input
                   type="text"
                   autoFocus
@@ -697,11 +725,24 @@ export const MapView: React.FC<MapViewProps> = ({
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+
+          {addPoiStep === 2 && (
+            <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+              <div className="rounded-2xl border border-[#17352b]/10 bg-[#17352b] p-4 text-white">
+                <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-emerald-300">Récapitulatif</p>
+                <p className="mt-1 truncate text-base font-extrabold">{newPoiTitle || 'Sans titre'}</p>
+                <p className="mt-0.5 text-[11px] font-medium text-white/70">
+                  {poiTypes.find((t) => t.id === newPoiType)?.emoji}{' '}
+                  {poiTypes.find((t) => t.id === newPoiType)?.label}
+                </p>
+              </div>
 
               <div className="rounded-2xl border border-[#17352b]/10 bg-white p-3 space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-[11px] font-bold text-[#17352b]">Emplacement</p>
+                    <p className="text-[11px] font-bold text-[#17352b]">Emplacement *</p>
                     <p className="text-[11px] font-mono text-[#68756d] truncate">
                       {clickCoords.lat.toFixed(5)}, {clickCoords.lng.toFixed(5)}
                     </p>
@@ -737,7 +778,9 @@ export const MapView: React.FC<MapViewProps> = ({
               </div>
 
               <label className="block space-y-1.5">
-                <span className="text-[11px] font-bold text-[#17352b]">Note <span className="font-medium text-[#68756d]">(optionnel)</span></span>
+                <span className="text-[11px] font-bold text-[#17352b]">
+                  Note <span className="font-medium text-[#68756d]">(optionnel)</span>
+                </span>
                 <input
                   type="text"
                   placeholder="Ombre, calme, 4G…"
@@ -773,31 +816,9 @@ export const MapView: React.FC<MapViewProps> = ({
                   ))}
                 </div>
               </div>
-
-              {formError && (
-                <p className="text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
-                  {formError}
-                </p>
-              )}
-
-              <div className="flex gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={closeAddPoiForm}
-                  className="flex-1 px-4 py-3 rounded-2xl text-xs font-bold text-[#68756d] hover:bg-[#17352b]/5"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  className="flex-[1.5] px-4 py-3 rounded-2xl text-xs font-bold bg-[#eb6c32] text-white shadow-[0_8px_20px_rgba(235,108,50,.28)] hover:bg-[#d95d29]"
-                >
-                  Enregistrer le spot
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+            </div>
+          )}
+        </StepFormModal>
       )}
     </div>
   );

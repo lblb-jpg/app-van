@@ -1,5 +1,5 @@
 /* Vanlife Club — service worker (mobile PWA shell) */
-const CACHE = 'vanlife-club-v4';
+const CACHE = 'vanlife-club-v5';
 const PRECACHE = ['/', '/index.html', '/manifest.json', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {

@@ -3,10 +3,9 @@ import path from "path";
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import {
-  buildVanSpotOverpassQuery,
-  mapOverpassToSpots,
-  shortPlaceName,
-} from "./src/services/vanSpotEngine";
+  searchVanSleepSpots as runVanSleepSearch,
+  suggestFrancePlaces as runFrancePlacesSuggest,
+} from "./src/server/sleepSearchApi";
 
 dotenv.config();
 dotenv.config({ path: ".env.local", override: true });
@@ -139,55 +138,13 @@ app.get("/api/supabase/status", (req, res) => {
   });
 });
 
-const vanSpotCache = new Map<string, { expiresAt: number; payload: unknown }>();
-const francePlaceCache = new Map<string, { expiresAt: number; payload: unknown }>();
-
-async function fetchJson(url: string, init: RequestInit, timeoutMs: number) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return await response.json();
-  } finally {
-    clearTimeout(timeout);
-  }
-}
 
 app.get("/api/france-places/suggest", async (req, res) => {
   const query = String(req.query.q || "").trim().slice(0, 80);
   if (query.length < 2) return res.json({ places: [] });
 
-  const cacheKey = query.toLocaleLowerCase("fr");
-  const cached = francePlaceCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return res.json(cached.payload);
-
   try {
-    const url = new URL("https://geo.api.gouv.fr/communes");
-    url.searchParams.set("nom", query);
-    url.searchParams.set("fields", "nom,code,codesPostaux,centre,departement,region,population");
-    url.searchParams.set("boost", "population");
-    url.searchParams.set("limit", "10");
-    const communes = await fetchJson(url.toString(), {
-      headers: { "User-Agent": "VanlifeClub/1.0 (internal road-trip planner)" },
-    }, 8_000) as any[];
-
-    const payload = {
-      places: communes
-        .filter((commune) => Array.isArray(commune.centre?.coordinates))
-        .map((commune) => ({
-          id: commune.code,
-          name: commune.nom,
-          postalCode: commune.codesPostaux?.[0] || "",
-          department: commune.departement?.nom || "",
-          region: commune.region?.nom || "",
-          population: commune.population || 0,
-          lat: commune.centre.coordinates[1],
-          lng: commune.centre.coordinates[0],
-          label: `${commune.nom}${commune.codesPostaux?.[0] ? ` (${commune.codesPostaux[0]})` : ""} · ${commune.departement?.nom || commune.region?.nom || "France"}`,
-        })),
-    };
-    francePlaceCache.set(cacheKey, { expiresAt: Date.now() + 24 * 60 * 60_000, payload });
+    const payload = await runFrancePlacesSuggest(query);
     return res.json(payload);
   } catch (error) {
     console.error("France places suggestion error:", error);
@@ -201,101 +158,24 @@ app.get("/api/van-spots/search", async (req, res) => {
   const suppliedLat = Number(req.query.lat);
   const suppliedLng = Number(req.query.lng);
   const hasSuppliedCoordinates = Number.isFinite(suppliedLat) && Number.isFinite(suppliedLng);
-  if (query.length < 2) return res.status(400).json({ error: "Indique une ville ou un village." });
-
-  const cacheKey = `${query.toLocaleLowerCase("fr")}:${hasSuppliedCoordinates ? `${suppliedLat.toFixed(4)},${suppliedLng.toFixed(4)}` : "geo"}:${radiusKm}:v2`;
-  const cached = vanSpotCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return res.json(cached.payload);
 
   try {
-    let placeName: string;
-    let placeType = "commune";
-    let lat: number;
-    let lng: number;
-
-    if (hasSuppliedCoordinates) {
-      lat = suppliedLat;
-      lng = suppliedLng;
-      placeName = shortPlaceName(String(req.query.label || query), query);
-      placeType = String(req.query.label || "").toLowerCase().includes("position") ? "gps" : "commune";
-    } else {
-      const geoUrl = new URL("https://geo.api.gouv.fr/communes");
-      geoUrl.searchParams.set("nom", query);
-      geoUrl.searchParams.set("fields", "nom,centre,population");
-      geoUrl.searchParams.set("boost", "population");
-      geoUrl.searchParams.set("limit", "5");
-      const communes = await fetchJson(geoUrl.toString(), {
-        headers: { "User-Agent": "VanlifeClub/1.0 (internal road-trip planner)" },
-      }, 10_000) as Array<{ nom?: string; population?: number; centre?: { coordinates?: [number, number] } }>;
-
-      const normalized = query.toLocaleLowerCase("fr");
-      const ranked = communes
-        .filter((item) => Array.isArray(item.centre?.coordinates))
-        .sort((a, b) => {
-          const aExact = (a.nom || "").toLocaleLowerCase("fr") === normalized ? 1 : 0;
-          const bExact = (b.nom || "").toLocaleLowerCase("fr") === normalized ? 1 : 0;
-          if (aExact !== bExact) return bExact - aExact;
-          return (b.population || 0) - (a.population || 0);
-        });
-      const commune = ranked[0];
-      if (!commune?.centre?.coordinates) {
-        return res.status(404).json({ error: "Ville ou village introuvable." });
-      }
-      placeName = commune.nom || query;
-      lat = commune.centre.coordinates[1];
-      lng = commune.centre.coordinates[0];
-    }
-
-    const overpassQuery = buildVanSpotOverpassQuery(lat, lng, Math.round(radiusKm * 1000));
-    let overpass: { elements?: unknown[] } | null = null;
-    const overpassEndpoints = [
-      "https://overpass-api.de/api/interpreter",
-      "https://overpass.kumi.systems/api/interpreter",
-      "https://overpass.private.coffee/api/interpreter",
-      "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-    ];
-    for (const endpoint of overpassEndpoints) {
-      try {
-        overpass = await fetchJson(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "VanlifeClub/1.0 (internal road-trip planner)",
-            "Accept": "application/json",
-          },
-          body: new URLSearchParams({ data: overpassQuery }),
-        }, 32_000) as { elements?: unknown[] };
-        break;
-      } catch (error) {
-        console.warn(`Overpass failed (${endpoint}):`, error);
-      }
-    }
-    if (!overpass) throw new Error("Les données cartographiques sont momentanément indisponibles.");
-
-    const spots = mapOverpassToSpots(overpass.elements || [], lat, lng);
-    const payload = {
+    const payload = await runVanSleepSearch({
       query,
-      place: {
-        name: placeName,
-        lat,
-        lng,
-        type: placeType,
-      },
       radiusKm,
-      count: spots.length,
-      spots,
-      attribution: "Données © contributeurs OpenStreetMap",
-      notice: "Priorité aux aires et parkings van recensés. Vérifie toujours panneau et règlement local avant de dormir.",
-    };
-    vanSpotCache.set(cacheKey, { expiresAt: Date.now() + 30 * 60_000, payload });
+      lat: hasSuppliedCoordinates ? suppliedLat : undefined,
+      lng: hasSuppliedCoordinates ? suppliedLng : undefined,
+      label: typeof req.query.label === "string" ? req.query.label : undefined,
+    });
     return res.json(payload);
   } catch (error: any) {
     console.error("van-spots search error:", error);
-    return res.status(502).json({
-      error: error?.name === "AbortError"
+    const message =
+      error?.name === "AbortError"
         ? "La recherche a pris trop de temps. Réessaie."
-        : error?.message || "Recherche de spots indisponible.",
-    });
+        : error?.message || "Recherche de spots indisponible.";
+    const status = message.includes("introuvable") ? 404 : message.includes("Indique") ? 400 : 502;
+    return res.status(status).json({ error: message });
   }
 });
 

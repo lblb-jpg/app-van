@@ -11,7 +11,19 @@ import {
   Filter,
   Trash2,
 } from 'lucide-react';
-import { JournalNote, TripPhoto, Friend } from '../types';
+import { JournalNote, TripPhoto, Friend, GpsPoint } from '../types';
+import { isGeolocationAvailable, reverseGeocodeCity } from '../services/geolocation';
+import { StepFormModal } from './StepFormModal';
+
+const ADD_NOTE_STEPS = [
+  { id: 1, label: 'Infos', hint: 'Titre et lieu' },
+  { id: 2, label: 'Récit', hint: 'Histoire et photo' },
+] as const;
+
+const ADD_PHOTO_STEPS = [
+  { id: 1, label: 'Image', hint: 'Choisir une photo' },
+  { id: 2, label: 'Détails', hint: 'Légende et lieu' },
+] as const;
 
 function formatPhotoDate(isoDate: string) {
   const parsed = new Date(`${isoDate}T12:00:00`);
@@ -81,6 +93,7 @@ interface JournalAndPhotosProps {
   photos: TripPhoto[];
   friends: Friend[];
   currentFriendId: string;
+  userLocation: GpsPoint | null;
   onAddNote: (newNote: Omit<JournalNote, 'id'>) => void;
   onAddPhoto: (newPhoto: Omit<TripPhoto, 'id'>) => void;
   onDeletePhoto: (id: string) => void;
@@ -91,6 +104,7 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   photos,
   friends,
   currentFriendId,
+  userLocation,
   onAddNote,
   onAddPhoto,
   onDeletePhoto,
@@ -99,6 +113,8 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   const [selectedFriendFilter, setSelectedFriendFilter] = useState<string>('all');
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [noteStep, setNoteStep] = useState(1);
+  const [photoStep, setPhotoStep] = useState(1);
   const [selectedPhotoPreview, setSelectedPhotoPreview] = useState<TripPhoto | null>(null);
   const [photoToDelete, setPhotoToDelete] = useState<TripPhoto | null>(null);
 
@@ -111,7 +127,9 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   // New Photo Form State
   const [photoUrlInput, setPhotoUrlInput] = useState('');
   const [photoCaption, setPhotoCaption] = useState('');
-  const [photoLocation, setPhotoLocation] = useState('Mont-Cenis');
+  const [photoLocation, setPhotoLocation] = useState('');
+  const [photoCoords, setPhotoCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationLoading, setLocationLoading] = useState(false);
 
   const handleCreateNote = (e: React.FormEvent) => {
     e.preventDefault();
@@ -129,6 +147,7 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
     setNoteTitle('');
     setNoteContent('');
     setNotePhotoUrl('');
+    setNoteStep(1);
     setShowNoteModal(false);
   };
 
@@ -142,12 +161,15 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
       date: new Date().toISOString().split('T')[0],
       friendId: currentFriendId,
       locationName: photoLocation.trim(),
-      lat: 45.8992,
-      lng: 6.1294
+      lat: photoCoords?.lat,
+      lng: photoCoords?.lng,
     });
 
     setPhotoUrlInput('');
     setPhotoCaption('');
+    setPhotoLocation('');
+    setPhotoCoords(null);
+    setPhotoStep(1);
     setShowPhotoModal(false);
   };
 
@@ -188,6 +210,44 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   const previewAuthor = selectedPhotoPreview
     ? friends.find((f) => f.id === selectedPhotoPreview.friendId)
     : undefined;
+
+  useEffect(() => {
+    if (!showPhotoModal) return;
+
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const applyCoords = async (lat: number, lng: number) => {
+      if (cancelled) return;
+      setPhotoCoords({ lat, lng });
+      setLocationLoading(true);
+      try {
+        const city = await reverseGeocodeCity(lat, lng, controller.signal);
+        if (!cancelled && city) setPhotoLocation(city);
+      } catch {
+        // Keep manual entry if reverse geocoding fails.
+      } finally {
+        if (!cancelled) setLocationLoading(false);
+      }
+    };
+
+    if (userLocation) {
+      void applyCoords(userLocation.lat, userLocation.lng);
+    } else if (isGeolocationAvailable()) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => void applyCoords(position.coords.latitude, position.coords.longitude),
+        () => {
+          if (!cancelled) setLocationLoading(false);
+        },
+        { enableHighAccuracy: true, timeout: 12_000, maximumAge: 60_000 }
+      );
+    }
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [showPhotoModal, userLocation]);
 
   useEffect(() => {
     if (!selectedPhotoPreview) return;
@@ -237,7 +297,15 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
 
           <button
             type="button"
-            onClick={() => (activeTab === 'journal' ? setShowNoteModal(true) : setShowPhotoModal(true))}
+            onClick={() => {
+              if (activeTab === 'journal') {
+                setNoteStep(1);
+                setShowNoteModal(true);
+              } else {
+                setPhotoStep(1);
+                setShowPhotoModal(true);
+              }
+            }}
             className="min-h-11 w-full sm:w-auto justify-center rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white shadow-xs transition-all font-bold text-xs flex items-center gap-1.5 px-4 py-2.5"
           >
             <Plus className="w-4 h-4 text-emerald-400" /> {activeTab === 'journal' ? 'Note' : 'Photo'}
@@ -392,173 +460,173 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
         </div>
       )}
 
-      {/* Add Journal Note Modal */}
-      {showNoteModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
-            <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100 mb-3">
-              <h3 className="min-w-0 font-bold text-sm text-slate-900 flex items-center gap-1.5 leading-snug">
-                <BookOpen className="w-4 h-4 shrink-0 text-emerald-600" /> Nouvelle note
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowNoteModal(false)}
-                className="touch-target flex items-center justify-center rounded-full text-slate-400 hover:text-slate-600 -mr-1"
-                aria-label="Fermer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateNote} className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Titre de l'anecdote *</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="ex: Apéro du soir & saucisson d'altitude"
-                  value={noteTitle}
-                  onChange={(e) => setNoteTitle(e.target.value)}
-                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 bg-slate-50"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Lieu / Étape</label>
-                <input
-                  type="text"
-                  placeholder="ex: Lac d'Annecy"
-                  value={noteLocation}
-                  onChange={(e) => setNoteLocation(e.target.value)}
-                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Récit du jour *</label>
-                <textarea
-                  rows={4}
-                  required
-                  placeholder="Racontez la journée, les galères de route, les rires..."
-                  value={noteContent}
-                  onChange={(e) => setNoteContent(e.target.value)}
-                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50"
-                ></textarea>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Photo d'illustration</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleImageFileSelect(e, true)}
-                  className="w-full text-xs text-slate-500 file:mr-2 file:py-1 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
-                />
-              </div>
-
-              <div className="pt-2 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={() => setShowNoteModal(false)}
-                  className="min-h-11 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  className="min-h-11 px-4 py-2.5 text-xs font-bold bg-emerald-600 text-white rounded-xl shadow-xs hover:bg-emerald-700"
-                >
-                  Publier
-                </button>
-              </div>
-            </form>
+      {/* Add Journal Note Modal — 2 étapes */}
+      <StepFormModal
+        isOpen={showNoteModal}
+        onClose={() => {
+          setNoteStep(1);
+          setShowNoteModal(false);
+        }}
+        title="Nouvelle note"
+        subtitle="Raconte ta journée de vanlife"
+        icon={<BookOpen className="w-5 h-5" />}
+        iconBgClassName="bg-emerald-600"
+        steps={ADD_NOTE_STEPS}
+        currentStep={noteStep}
+        onStepClick={setNoteStep}
+        canAdvanceFromStep={(step) => {
+          if (step === 1) return Boolean(noteTitle.trim());
+          return Boolean(noteContent.trim());
+        }}
+        onNext={() => setNoteStep(2)}
+        onPrevious={() => setNoteStep(1)}
+        onSubmit={handleCreateNote}
+        submitLabel="Publier"
+        titleId="add-note-title"
+      >
+        {noteStep === 1 && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-bold text-[#17352b]">Titre de l'anecdote *</span>
+              <input
+                type="text"
+                autoFocus
+                required
+                placeholder="ex: Apéro du soir & saucisson d'altitude"
+                value={noteTitle}
+                onChange={(e) => setNoteTitle(e.target.value)}
+                className="w-full text-sm font-semibold px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-bold text-[#17352b]">Lieu / Étape</span>
+              <input
+                type="text"
+                placeholder="ex: Lac d'Annecy"
+                value={noteLocation}
+                onChange={(e) => setNoteLocation(e.target.value)}
+                className="w-full text-sm font-medium px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+              />
+            </label>
           </div>
-        </div>
-      )}
-
-      {/* Add Photo Modal */}
-      {showPhotoModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
-            <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100 mb-3">
-              <h3 className="min-w-0 font-bold text-sm text-slate-900 flex items-center gap-1.5 leading-snug">
-                <Camera className="w-4 h-4 shrink-0 text-emerald-600" /> Ajouter une photo
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowPhotoModal(false)}
-                className="touch-target flex items-center justify-center rounded-full text-slate-400 hover:text-slate-600 -mr-1"
-                aria-label="Fermer"
-              >
-                <X className="w-5 h-5" />
-              </button>
+        )}
+        {noteStep === 2 && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+            <div className="rounded-2xl border border-[#17352b]/10 bg-[#17352b] p-4 text-white">
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-emerald-300">Récapitulatif</p>
+              <p className="mt-1 truncate text-base font-extrabold">{noteTitle || 'Sans titre'}</p>
+              {noteLocation && (
+                <p className="mt-0.5 truncate text-[11px] font-medium text-white/70">📍 {noteLocation}</p>
+              )}
             </div>
-
-            <form onSubmit={handleCreatePhoto} className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Prendre / Choisir une image *</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handleImageFileSelect(e, false)}
-                  className="w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 mb-2"
-                />
-                <input
-                  type="url"
-                  placeholder="ou coller l'URL d'une image..."
-                  value={photoUrlInput}
-                  onChange={(e) => setPhotoUrlInput(e.target.value)}
-                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Légende de la photo</label>
-                <input
-                  type="text"
-                  placeholder="ex: Vue du van au coucher de soleil"
-                  value={photoCaption}
-                  onChange={(e) => setPhotoCaption(e.target.value)}
-                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Lieu</label>
-                <input
-                  type="text"
-                  placeholder="ex: Col du Galibier"
-                  value={photoLocation}
-                  onChange={(e) => setPhotoLocation(e.target.value)}
-                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50"
-                />
-              </div>
-
-              {photoUrlInput && (
-                <div className="rounded-xl overflow-hidden border border-slate-200 h-32">
-                  <img src={photoUrlInput} alt="Preview" className="w-full h-full object-cover" />
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-bold text-[#17352b]">Récit du jour *</span>
+              <textarea
+                rows={5}
+                required
+                placeholder="Racontez la journée, les galères de route, les rires..."
+                value={noteContent}
+                onChange={(e) => setNoteContent(e.target.value)}
+                className="w-full resize-none text-sm px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-bold text-[#17352b]">Photo d'illustration</span>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => handleImageFileSelect(e, true)}
+                className="w-full text-xs text-[#68756d] file:mr-2 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-[#f5f1e7] file:text-[#17352b] hover:file:bg-[#ebe4d4]"
+              />
+              {notePhotoUrl && (
+                <div className="rounded-xl overflow-hidden border border-[#17352b]/10 h-32">
+                  <img src={notePhotoUrl} alt="Preview" className="w-full h-full object-cover" />
                 </div>
               )}
-
-              <div className="pt-2 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={() => setShowPhotoModal(false)}
-                  className="min-h-11 px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  className="min-h-11 px-4 py-2.5 text-xs font-bold bg-emerald-600 text-white rounded-xl shadow-xs hover:bg-emerald-700"
-                >
-                  Ajouter
-                </button>
-              </div>
-            </form>
+            </label>
           </div>
-        </div>
-      )}
+        )}
+      </StepFormModal>
+
+      {/* Add Photo Modal — 2 étapes */}
+      <StepFormModal
+        isOpen={showPhotoModal}
+        onClose={() => {
+          setPhotoStep(1);
+          setShowPhotoModal(false);
+        }}
+        title="Ajouter une photo"
+        subtitle="Immortalise un moment de route"
+        icon={<Camera className="w-5 h-5" />}
+        iconBgClassName="bg-emerald-600"
+        steps={ADD_PHOTO_STEPS}
+        currentStep={photoStep}
+        onStepClick={setPhotoStep}
+        canAdvanceFromStep={(step) => {
+          if (step === 1) return Boolean(photoUrlInput.trim());
+          return true;
+        }}
+        onNext={() => setPhotoStep(2)}
+        onPrevious={() => setPhotoStep(1)}
+        onSubmit={handleCreatePhoto}
+        submitLabel="Ajouter"
+        titleId="add-photo-title"
+      >
+        {photoStep === 1 && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-bold text-[#17352b]">Prendre / Choisir une image *</span>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => handleImageFileSelect(e, false)}
+                className="w-full text-xs text-[#68756d] file:mr-2 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 mb-2"
+              />
+              <input
+                type="url"
+                placeholder="ou coller l'URL d'une image..."
+                value={photoUrlInput}
+                onChange={(e) => setPhotoUrlInput(e.target.value)}
+                className="w-full text-sm px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+              />
+            </label>
+            {photoUrlInput && (
+              <div className="rounded-xl overflow-hidden border border-[#17352b]/10 h-40">
+                <img src={photoUrlInput} alt="Preview" className="w-full h-full object-cover" />
+              </div>
+            )}
+          </div>
+        )}
+        {photoStep === 2 && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+            {photoUrlInput && (
+              <div className="rounded-xl overflow-hidden border border-[#17352b]/10 h-36">
+                <img src={photoUrlInput} alt="Preview" className="w-full h-full object-cover" />
+              </div>
+            )}
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-bold text-[#17352b]">Légende de la photo</span>
+              <input
+                type="text"
+                placeholder="ex: Vue du van au coucher de soleil"
+                value={photoCaption}
+                onChange={(e) => setPhotoCaption(e.target.value)}
+                className="w-full text-sm px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+              />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] font-bold text-[#17352b]">Lieu</span>
+              <input
+                type="text"
+                placeholder={locationLoading ? 'Localisation en cours…' : 'ex: Annecy'}
+                value={photoLocation}
+                onChange={(e) => setPhotoLocation(e.target.value)}
+                className="w-full text-sm px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+              />
+            </label>
+          </div>
+        )}
+      </StepFormModal>
 
       {/* Immersive photo viewer */}
       {selectedPhotoPreview && (

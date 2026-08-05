@@ -25,7 +25,7 @@ export const WalkieTalkie: React.FC<WalkieTalkieProps> = ({
     : isConnecting
       ? 'Connexion radio…'
       : channelReady
-        ? `${onlineCount}/${Math.max(0, friends.length - 1)} à l’écoute`
+        ? `${onlineCount}/${friends.length} à l’écoute`
         : 'Hors ligne';
 
   return (

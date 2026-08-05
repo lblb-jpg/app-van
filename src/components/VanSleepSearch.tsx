@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import type { FrancePlace, VanSleepSearchResult, VanSleepSpot } from '../types';
 import { geolocationErrorMessage, isGeolocationAvailable } from '../services/geolocation';
+import { markGeoGranted } from '../lib/permissions';
 import { searchVanSleepSpots, suggestFrenchPlaces } from '../services/vanSpots';
 
 interface VanSleepSearchProps {
@@ -112,7 +113,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
     return () => window.clearTimeout(timer);
   }, [query, loading, queryEdited]);
 
-  const runSearch = async (searchQuery = query, place?: FrancePlace) => {
+  const runSearch = async (searchQuery = query, place?: FrancePlace, radius = radiusKm) => {
     const trimmed = searchQuery.trim();
     if (trimmed.length < 2) {
       setError('Entre le nom d’une ville ou d’un village.');
@@ -133,7 +134,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
     setShowSuggestions(false);
     setFilter('recommended');
     try {
-      const data = await searchVanSleepSpots(trimmed, radiusKm, place, controller.signal);
+      const data = await searchVanSleepSpots(trimmed, radius, place, controller.signal);
       setResult(data);
       setQuery(trimmed);
       if (!place?.label?.toLowerCase().includes('autour de moi')) {
@@ -159,6 +160,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
     setError('');
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        markGeoGranted();
         setLocating(false);
         const place: FrancePlace = {
           id: 'gps',
@@ -178,7 +180,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
         setLocating(false);
         setError(geolocationErrorMessage(geoError));
       },
-      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 60_000 }
+      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 120_000 }
     );
   };
 
@@ -337,7 +339,24 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
               <span className="text-[9px] font-extrabold uppercase tracking-[.12em] text-white/45 sm:hidden">Rayon</span>
               <select
                 value={radiusKm}
-                onChange={(event) => setRadiusKm(Number(event.target.value))}
+                onChange={(event) => {
+                  const nextRadius = Number(event.target.value);
+                  setRadiusKm(nextRadius);
+                  if (result && submittedQuery) {
+                    const gpsPlace = result.place?.type === 'gps' ? {
+                      id: 'gps',
+                      name: result.place.name,
+                      label: result.place.name,
+                      postalCode: '',
+                      department: '',
+                      region: '',
+                      population: 0,
+                      lat: result.place.lat,
+                      lng: result.place.lng,
+                    } : undefined;
+                    void runSearch(submittedQuery, gpsPlace, nextRadius);
+                  }
+                }}
                 aria-label="Rayon de recherche"
                 className="border-0 bg-transparent text-[10px] font-extrabold text-white outline-none sm:text-[9px]"
               >

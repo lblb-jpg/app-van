@@ -21,6 +21,13 @@ import { calculateHaversineDistance } from '../services/gpx';
 import type { CloudContext } from '../services/supabaseRepo';
 import type { GeoStatus } from '../services/geolocation';
 import { toUserFacingError } from '../lib/userFacingError';
+import { wasGeoGranted } from '../lib/permissions';
+import { StepFormModal } from './StepFormModal';
+
+const PROFILE_STEPS = [
+  { id: 1, label: 'Photo', hint: 'Avatar de profil' },
+  { id: 2, label: 'Identité', hint: 'Nom affiché' },
+] as const;
 
 interface LiveRadarProps {
   friends: Friend[];
@@ -84,6 +91,7 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
   onUpdateFriendProfile,
 }) => {
   const status: GeoStatus = geoStatus ?? { state: 'idle' };
+  const geoAlreadyGranted = wasGeoGranted() || status.state === 'ready' || status.state === 'locating';
   const [inviteCode, setInviteCode] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [inviteBusy, setInviteBusy] = useState(false);
@@ -94,6 +102,7 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
   const [editingFriend, setEditingFriend] = useState<Friend | null>(null);
   const [editName, setEditName] = useState('');
   const [editAvatar, setEditAvatar] = useState('');
+  const [profileStep, setProfileStep] = useState(1);
   const [photoError, setPhotoError] = useState('');
   const currentFriend = friends.find((f) => f.id === currentFriendId) || friends[0];
 
@@ -217,6 +226,7 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
     setEditName(friend.name);
     setEditAvatar(friend.avatar);
     setPhotoError('');
+    setProfileStep(1);
   };
 
   const handleProfilePhoto = async (file?: File) => {
@@ -287,26 +297,35 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
               </div>
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-300/90">
-                  {locating ? 'Recherche GPS' : 'GPS requis'}
+                  {locating || geoAlreadyGranted ? 'Recherche GPS' : 'GPS requis'}
                 </p>
                 <h3 className="font-extrabold text-lg mt-1 leading-tight">
-                  {locating ? 'On cherche ta position…' : 'Active ta localisation'}
+                  {locating || geoAlreadyGranted
+                    ? 'On cherche ta position…'
+                    : 'Active ta localisation'}
                 </h3>
                 <p className="text-[12px] text-white/65 font-medium mt-1.5 leading-relaxed">
                   {geoErrorMessage ||
-                    (locating
-                      ? 'Autorise la localisation si le navigateur te le demande.'
+                    (locating || geoAlreadyGranted
+                      ? 'Localisation déjà autorisée — acquisition du signal GPS en cours.'
                       : 'Sans GPS, on ne peut ni te placer ni calculer les distances avec les autres.')}
                 </p>
               </div>
             </div>
 
             <ol className="space-y-2 rounded-2xl bg-white/5 border border-white/10 p-3.5">
-              {[
-                'Autorise la localisation pour ce site',
-                'Attends le premier signal GPS',
-                'Invite un copain avec le code plus bas',
-              ].map((step, index) => (
+              {(geoAlreadyGranted
+                ? [
+                    'Localisation déjà autorisée',
+                    'Attends le premier signal GPS',
+                    'Invite un copain avec le code plus bas',
+                  ]
+                : [
+                    'Autorise la localisation une seule fois',
+                    'Attends le premier signal GPS',
+                    'Invite un copain avec le code plus bas',
+                  ]
+              ).map((step, index) => (
                 <li key={step} className="flex items-start gap-2.5 text-[12px] font-semibold text-white/80">
                   <span className="w-5 h-5 rounded-full bg-white/10 text-[10px] font-black flex items-center justify-center shrink-0 mt-0.5">
                     {index + 1}
@@ -623,101 +642,77 @@ export const LiveRadar: React.FC<LiveRadarProps> = ({
       {editingFriend &&
         typeof document !== 'undefined' &&
         createPortal(
-          <div
-            className="fixed inset-0 z-[90] flex items-center justify-center bg-[#17352b]/50 px-4 py-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,calc(env(safe-area-inset-bottom)+0.5rem))] backdrop-blur-sm"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="crew-settings-title"
-            onClick={() => setEditingFriend(null)}
+          <StepFormModal
+            isOpen={Boolean(editingFriend)}
+            onClose={() => {
+              setProfileStep(1);
+              setEditingFriend(null);
+            }}
+            title="Modifier le profil"
+            subtitle={editingFriend.name}
+            icon={<Settings2 className="w-5 h-5" />}
+            iconBgClassName="bg-[#17352b]"
+            steps={PROFILE_STEPS}
+            currentStep={profileStep}
+            onStepClick={setProfileStep}
+            canAdvanceFromStep={(step) => (step === 1 ? Boolean(editAvatar) : Boolean(editName.trim()))}
+            onNext={() => setProfileStep(2)}
+            onPrevious={() => setProfileStep(1)}
+            onSubmit={saveProfileSettings}
+            submitLabel="Enregistrer"
+            error={photoError}
+            titleId="crew-settings-title"
+            usePortal={false}
           >
-            <form
-              onSubmit={saveProfileSettings}
-              onClick={(event) => event.stopPropagation()}
-              className="van-install-sheet relative w-full max-w-[22rem] max-h-[min(88dvh,36rem)] overflow-y-auto overscroll-contain rounded-[1.75rem] p-5 shadow-[0_28px_70px_rgba(23,53,43,.28)] sm:p-6"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <p className="text-[9px] font-extrabold uppercase tracking-[.16em] text-[#eb6c32]">
-                    Réglages équipage
-                  </p>
-                  <h3
-                    id="crew-settings-title"
-                    className="mt-1 text-base font-extrabold leading-snug text-[#17352b]"
-                  >
-                    Modifier le profil
-                  </h3>
-                  <p className="mt-1 truncate text-[11px] font-semibold text-zinc-500">
-                    {editingFriend.name}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setEditingFriend(null)}
-                  className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-zinc-100 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-800"
-                  aria-label="Fermer"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div className="mt-5 flex flex-col items-center gap-4 sm:flex-row sm:items-center">
-                <div className="relative shrink-0">
-                  <img
-                    src={editAvatar}
-                    alt=""
-                    className="h-24 w-24 rounded-[1.5rem] object-cover ring-2 ring-zinc-100 shadow-md"
-                  />
-                  <label className="absolute -bottom-1 -right-1 grid h-10 w-10 cursor-pointer place-items-center rounded-xl bg-[#eb6c32] text-white shadow-md ring-2 ring-white transition hover:bg-[#d85f28]">
-                    <Camera className="h-4 w-4" />
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(event) => void handleProfilePhoto(event.target.files?.[0])}
+            {profileStep === 1 && (
+              <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+                <div className="flex flex-col items-center gap-4 py-2">
+                  <div className="relative shrink-0">
+                    <img
+                      src={editAvatar}
+                      alt=""
+                      className="h-28 w-28 rounded-[1.5rem] object-cover ring-2 ring-[#17352b]/10 shadow-md"
                     />
-                  </label>
+                    <label className="absolute -bottom-1 -right-1 grid h-10 w-10 cursor-pointer place-items-center rounded-xl bg-[#eb6c32] text-white shadow-md ring-2 ring-white transition hover:bg-[#d85f28]">
+                      <Camera className="h-4 w-4" />
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(event) => void handleProfilePhoto(event.target.files?.[0])}
+                      />
+                    </label>
+                  </div>
+                  <p className="text-center text-[11px] font-semibold leading-relaxed text-[#68756d]">
+                    Touche l’icône appareil photo pour changer ton avatar.
+                  </p>
                 </div>
-
-                <label className="min-w-0 w-full flex-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                    Nom affiché
-                  </span>
+              </div>
+            )}
+            {profileStep === 2 && (
+              <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
+                <div className="flex items-center gap-3 rounded-2xl border border-[#17352b]/10 bg-[#f5f1e7] p-3">
+                  <img src={editAvatar} alt="" className="h-14 w-14 rounded-xl object-cover ring-2 ring-white shadow-sm" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-[#68756d]">Aperçu</p>
+                    <p className="truncate text-sm font-extrabold text-[#17352b]">{editName || 'Sans nom'}</p>
+                  </div>
+                </div>
+                <label className="block space-y-1.5">
+                  <span className="text-[11px] font-bold text-[#17352b]">Nom affiché *</span>
                   <input
                     autoFocus
                     required
                     maxLength={30}
                     value={editName}
                     onChange={(event) => setEditName(event.target.value)}
-                    className="mt-1.5 w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 py-3 text-sm font-bold text-zinc-900 outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full rounded-2xl border border-[#17352b]/12 bg-white px-3.5 py-3 text-sm font-bold text-[#17352b] outline-none focus:ring-2 focus:ring-emerald-500"
                     placeholder="Prénom ou surnom"
                   />
                 </label>
               </div>
-
-              {photoError && (
-                <p className="mt-3 text-center text-[10px] font-semibold text-red-600 sm:text-left">
-                  {photoError}
-                </p>
-              )}
-
-              <div className="mt-6 grid grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setEditingFriend(null)}
-                  className="min-h-12 rounded-2xl bg-zinc-100 py-3 text-xs font-bold text-zinc-600 transition hover:bg-zinc-200"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={!editName.trim()}
-                  className="min-h-12 rounded-2xl bg-[#17352b] py-3 text-xs font-extrabold text-white transition hover:bg-[#214538] disabled:opacity-40"
-                >
-                  Enregistrer
-                </button>
-              </div>
-            </form>
-          </div>,
+            )}
+          </StepFormModal>,
           document.body
         )}
     </div>

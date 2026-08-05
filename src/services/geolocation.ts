@@ -1,3 +1,5 @@
+import { markGeoGranted, queryGeoPermission, wasGeoGranted } from '../lib/permissions';
+
 export type GeoStatus =
   | { state: 'idle' }
   | { state: 'locating' }
@@ -28,9 +30,9 @@ export type GeoHandlers = {
 
 /**
  * Starts a resilient GPS session:
- * 1) fast coarse getCurrentPosition
- * 2) continuous high-accuracy watch (fresh fixes only)
- * Does not clear a previous good fix on timeout.
+ * 1) fast getCurrentPosition (uses cache if already authorized)
+ * 2) continuous high-accuracy watch
+ * Does not re-prompt once the browser has granted permission.
  */
 export function startGeolocationWatch(handlers: GeoHandlers) {
   if (!isGeolocationAvailable()) {
@@ -55,18 +57,21 @@ export function startGeolocationWatch(handlers: GeoHandlers) {
   let watchId: number | null = null;
   let gotFix = false;
   let lastEmittedTs = 0;
+  let alreadyGranted = wasGeoGranted();
+  let started = false;
 
   handlers.onStatus?.({ state: 'locating' });
 
   const applyPosition = (position: GeolocationPosition) => {
     if (cancelled) return;
 
-    // Drop duplicate / out-of-order callbacks from the browser.
     const ts = position.timestamp || Date.now();
     if (ts < lastEmittedTs - 250) return;
     lastEmittedTs = ts;
 
     gotFix = true;
+    alreadyGranted = true;
+    markGeoGranted();
     handlers.onPosition(position);
     const accuracy =
       position.coords.accuracy != null && Number.isFinite(position.coords.accuracy)
@@ -78,9 +83,13 @@ export function startGeolocationWatch(handlers: GeoHandlers) {
   const onError = (error: GeolocationPositionError) => {
     if (cancelled) return;
     const fatal = error.code === error.PERMISSION_DENIED;
-    // Keep last fix on timeout / temporary unavailability.
     if (!fatal && gotFix) {
       handlers.onStatus?.({ state: 'ready' });
+      return;
+    }
+    // Already authorized but temporary timeout: keep locating quietly.
+    if (!fatal && alreadyGranted) {
+      handlers.onStatus?.({ state: 'locating' });
       return;
     }
     handlers.onStatus?.({
@@ -90,20 +99,67 @@ export function startGeolocationWatch(handlers: GeoHandlers) {
     });
   };
 
-  navigator.geolocation.getCurrentPosition(applyPosition, onError, {
-    enableHighAccuracy: true,
-    timeout: 20_000,
-    maximumAge: 15_000,
+  const startWatch = (granted: boolean) => {
+    if (cancelled || started) return;
+    started = true;
+    alreadyGranted = granted || alreadyGranted;
+    // Warm start from cache when already authorized — avoids a fresh "permission" feel.
+    navigator.geolocation.getCurrentPosition(applyPosition, onError, {
+      enableHighAccuracy: !granted,
+      timeout: granted ? 12_000 : 20_000,
+      maximumAge: granted ? 120_000 : 15_000,
+    });
+
+    watchId = navigator.geolocation.watchPosition(applyPosition, onError, {
+      enableHighAccuracy: true,
+      timeout: 25_000,
+      maximumAge: granted ? 5_000 : 0,
+    });
+  };
+
+  void queryGeoPermission().then((state) => {
+    if (cancelled) return;
+    if (state === 'denied' && !gotFix && !wasGeoGranted()) {
+      handlers.onStatus?.({
+        state: 'error',
+        message:
+          'Autorise la localisation dans le navigateur pour afficher ta position.',
+        fatal: true,
+      });
+      return;
+    }
+    startWatch(state === 'granted' || wasGeoGranted());
   });
 
-  watchId = navigator.geolocation.watchPosition(applyPosition, onError, {
-    enableHighAccuracy: true,
-    timeout: 20_000,
-    maximumAge: 0,
-  });
+  // Fallback if Permissions API hangs / is unavailable.
+  const fallbackTimer = window.setTimeout(() => {
+    if (cancelled || started || gotFix) return;
+    startWatch(wasGeoGranted());
+  }, 350);
 
   return () => {
     cancelled = true;
+    window.clearTimeout(fallbackTimer);
     if (watchId != null) navigator.geolocation.clearWatch(watchId);
   };
+}
+
+/** Reverse-geocode coordinates to the nearest French commune (city/village). */
+export async function reverseGeocodeCity(lat: number, lng: number, signal?: AbortSignal) {
+  const url = new URL('https://api-adresse.data.gouv.fr/reverse/');
+  url.searchParams.set('lon', String(lng));
+  url.searchParams.set('lat', String(lat));
+  url.searchParams.set('limit', '1');
+
+  const response = await fetch(url.toString(), { signal });
+  if (!response.ok) return null;
+
+  const data = (await response.json()) as {
+    features?: Array<{ properties?: { city?: string; name?: string; label?: string } }>;
+  };
+
+  const props = data.features?.[0]?.properties;
+  if (!props) return null;
+
+  return props.city?.trim() || props.name?.trim() || props.label?.split(',')[0]?.trim() || null;
 }

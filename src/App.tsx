@@ -1013,7 +1013,18 @@ export default function App() {
         onDismissSyncError={() => setSyncError('')}
       />
 
-      {walkie.activeSpeaker && activeTab !== 'radio' && (
+      {walkie.channelReady && !walkie.audioUnlocked && (
+        <button
+          type="button"
+          onClick={() => void walkie.unlockAudio()}
+          className="fixed left-1/2 top-[4.6rem] z-[80] flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-2 truncate rounded-full bg-[#eb6c32] px-3 py-2 text-[11px] font-extrabold text-white shadow-[0_12px_30px_rgba(235,108,50,.35)] ring-1 ring-white/10"
+        >
+          <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-white" />
+          <span className="truncate">Activer la radio pour entendre l’équipage</span>
+        </button>
+      )}
+
+      {walkie.activeSpeaker && activeTab !== 'radio' && walkie.audioUnlocked && (
         <button
           type="button"
           onClick={() => {
@@ -1105,6 +1116,7 @@ export default function App() {
             photos={photos}
             friends={friends}
             currentFriendId={currentFriendId}
+            userLocation={userLocation}
             onAddNote={handleAddJournalNote}
             onAddPhoto={handleAddPhoto}
             onDeletePhoto={handleDeletePhoto}

@@ -6,10 +6,10 @@ import {
 } from './vanSpotEngine';
 
 const OVERPASS_ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  'https://overpass-api.de/api/interpreter',
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -157,32 +157,21 @@ async function queryOverpass(overpassQuery: string, signal?: AbortSignal) {
   let lastError: unknown;
   for (const endpoint of OVERPASS_ENDPOINTS) {
     try {
-      const getUrl = `${endpoint}?data=${encodeURIComponent(overpassQuery)}`;
       return (await fetchJson(
-        getUrl,
-        { method: 'GET', headers: { Accept: 'application/json' } },
-        32_000,
+        endpoint,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Accept: 'application/json',
+          },
+          body: new URLSearchParams({ data: overpassQuery }),
+        },
+        20_000,
         signal
       )) as { elements?: unknown[] };
     } catch (error) {
       lastError = error;
-      try {
-        return (await fetchJson(
-          endpoint,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              Accept: 'application/json',
-            },
-            body: new URLSearchParams({ data: overpassQuery }),
-          },
-          32_000,
-          signal
-        )) as { elements?: unknown[] };
-      } catch (postError) {
-        lastError = postError;
-      }
     }
   }
   if ((lastError as DOMException)?.name === 'AbortError') throw lastError;

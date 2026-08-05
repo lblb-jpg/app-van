@@ -2,6 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import type { Friend } from '../types';
 import type { CloudContext } from '../services/supabaseRepo';
+import {
+  markAudioUnlocked,
+  markMicGranted,
+  wasAudioUnlocked,
+  wasMicGranted,
+} from '../lib/permissions';
 
 export type WalkieCall = {
   id: string;
@@ -28,7 +34,9 @@ type WalkieSignal =
     };
 
 const MAX_TRANSMISSION_MS = 60_000;
-const STALE_SPEAKER_MS = 4_000;
+const STALE_SPEAKER_MS = 1_500;
+const PRESENCE_INTERVAL_MS = 3_000;
+const STALE_CHECK_MS = 500;
 const TARGET_SAMPLE_RATE = 16_000;
 const FRAME_SAMPLES = 2048;
 
@@ -86,7 +94,7 @@ export function useWalkieRadio(options: {
   const [error, setError] = useState('');
   const [activeSpeaker, setActiveSpeaker] = useState<{ id: string; name: string } | null>(null);
   const [calls, setCalls] = useState<WalkieCall[]>([]);
-  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [audioUnlocked, setAudioUnlocked] = useState(() => wasAudioUnlocked());
 
   const channelRef = useRef<RealtimeChannel | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -94,14 +102,17 @@ export function useWalkieRadio(options: {
   const playbackCtxRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const nextPlayTimeRef = useRef(0);
+  const muteGainRef = useRef<GainNode | null>(null);
+  const nextPlayTimeBySpeakerRef = useRef(new Map<string, number>());
   const presenceRef = useRef(new Map<string, number>());
   const remoteCallStartedRef = useRef(new Map<string, number>());
   const lastSpeakerActivityRef = useRef(new Map<string, number>());
+  const remoteSpeakerRef = useRef<{ id: string; name: string } | null>(null);
   const startedAtRef = useRef(0);
   const stopTimerRef = useRef<number | undefined>(undefined);
   const elapsedTimerRef = useRef<number | undefined>(undefined);
   const presenceTimerRef = useRef<number | undefined>(undefined);
+  const staleTimerRef = useRef<number | undefined>(undefined);
   const releaseRequestedRef = useRef(false);
   const transmittingRef = useRef(false);
   const senderNameRef = useRef('Équipier');
@@ -117,17 +128,62 @@ export function useWalkieRadio(options: {
       await playbackCtxRef.current.resume();
     }
     setAudioUnlocked(true);
+    markAudioUnlocked();
     return playbackCtxRef.current;
+  }, []);
+
+  const ensureMicStream = useCallback(async () => {
+    const live = streamRef.current?.getAudioTracks().some((track) => track.readyState === 'live');
+    if (streamRef.current && live) {
+      streamRef.current.getAudioTracks().forEach((track) => {
+        track.enabled = true;
+      });
+      return streamRef.current;
+    }
+
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      },
+    });
+    markMicGranted();
+    streamRef.current = stream;
+    return stream;
   }, []);
 
   const unlockAudio = useCallback(async () => {
     try {
       await ensurePlaybackContext();
+      if (navigator.mediaDevices?.getUserMedia && !wasMicGranted()) {
+        void ensureMicStream().then((stream) => {
+          stream.getAudioTracks().forEach((track) => {
+            track.enabled = false;
+          });
+        }).catch(() => undefined);
+      }
       setError('');
     } catch {
       setError('Impossible d’activer le haut-parleur sur cet appareil.');
     }
-  }, [ensurePlaybackContext]);
+  }, [ensureMicStream, ensurePlaybackContext]);
+
+  const setRemoteSpeaker = useCallback((speaker: { id: string; name: string } | null) => {
+    remoteSpeakerRef.current = speaker;
+    setActiveSpeaker(speaker);
+  }, []);
+
+  const isRemoteSpeakerActive = useCallback(() => {
+    const remote = remoteSpeakerRef.current;
+    if (!remote || remote.id === cloudContext?.user.id) return false;
+    const lastActivity = lastSpeakerActivityRef.current.get(remote.id) || 0;
+    return Date.now() - lastActivity <= STALE_SPEAKER_MS;
+  }, [cloudContext]);
 
   const sendSignal = useCallback(async (
     signal:
@@ -155,7 +211,12 @@ export function useWalkieRadio(options: {
     setOnlineCount(presenceRef.current.size);
   }, []);
 
-  const playPcmBuffer = useCallback((ctx: AudioContext, samples: Float32Array, sampleRate: number) => {
+  const playPcmBuffer = useCallback((
+    ctx: AudioContext,
+    samples: Float32Array,
+    sampleRate: number,
+    speakerId = 'local'
+  ) => {
     if (!samples.length) return;
     const buffer = ctx.createBuffer(1, samples.length, sampleRate || TARGET_SAMPLE_RATE);
     buffer.copyToChannel(samples, 0);
@@ -165,32 +226,33 @@ export function useWalkieRadio(options: {
     source.buffer = buffer;
     source.connect(gain);
     gain.connect(ctx.destination);
-    const startAt = Math.max(ctx.currentTime + 0.02, nextPlayTimeRef.current);
+    const queue = nextPlayTimeBySpeakerRef.current;
+    const nextAt = queue.get(speakerId) || 0;
+    const startAt = Math.max(ctx.currentTime + 0.02, nextAt);
     source.start(startAt);
-    nextPlayTimeRef.current = startAt + buffer.duration;
+    queue.set(speakerId, startAt + buffer.duration);
   }, []);
 
-  const playRemotePcm = useCallback(async (pcm: string, sampleRate: number) => {
+  const playRemotePcm = useCallback(async (speakerId: string, pcm: string, sampleRate: number) => {
     try {
       const ctx = await ensurePlaybackContext();
-      playPcmBuffer(ctx, base64ToFloat32(pcm), sampleRate);
+      playPcmBuffer(ctx, base64ToFloat32(pcm), sampleRate, speakerId);
     } catch {
-      setError('Touche une fois l’écran pour autoriser le haut-parleur.');
       setAudioUnlocked(false);
     }
   }, [ensurePlaybackContext, playPcmBuffer]);
 
   const clearStaleSpeaker = useCallback(() => {
-    setActiveSpeaker((speaker) => {
-      if (!speaker || speaker.id === cloudContext?.user.id) return speaker;
-      const lastActivity = lastSpeakerActivityRef.current.get(speaker.id) || 0;
-      if (Date.now() - lastActivity > STALE_SPEAKER_MS) {
-        remoteCallStartedRef.current.delete(speaker.id);
-        lastSpeakerActivityRef.current.delete(speaker.id);
-        return null;
-      }
-      return speaker;
-    });
+    const remote = remoteSpeakerRef.current;
+    if (!remote || remote.id === cloudContext?.user.id) return;
+    const lastActivity = lastSpeakerActivityRef.current.get(remote.id) || 0;
+    if (Date.now() - lastActivity > STALE_SPEAKER_MS) {
+      remoteCallStartedRef.current.delete(remote.id);
+      lastSpeakerActivityRef.current.delete(remote.id);
+      nextPlayTimeBySpeakerRef.current.delete(remote.id);
+      remoteSpeakerRef.current = null;
+      setActiveSpeaker(null);
+    }
   }, [cloudContext]);
 
   useEffect(() => {
@@ -214,8 +276,8 @@ export function useWalkieRadio(options: {
       if (signal.kind === 'ptt-start') {
         remoteCallStartedRef.current.set(signal.from, signal.sentAt);
         lastSpeakerActivityRef.current.set(signal.from, signal.sentAt);
-        setActiveSpeaker({ id: signal.from, name: signal.senderName });
-        nextPlayTimeRef.current = 0;
+        setRemoteSpeaker({ id: signal.from, name: signal.senderName });
+        nextPlayTimeBySpeakerRef.current.delete(signal.from);
         await ensurePlaybackContext().catch(() => undefined);
         return;
       }
@@ -224,7 +286,11 @@ export function useWalkieRadio(options: {
         const startedAt = remoteCallStartedRef.current.get(signal.from) || signal.sentAt;
         remoteCallStartedRef.current.delete(signal.from);
         lastSpeakerActivityRef.current.delete(signal.from);
-        setActiveSpeaker((speaker) => (speaker?.id === signal.from ? null : speaker));
+        nextPlayTimeBySpeakerRef.current.delete(signal.from);
+        if (remoteSpeakerRef.current?.id === signal.from) {
+          remoteSpeakerRef.current = null;
+          setActiveSpeaker(null);
+        }
         setCalls((items) => [{
           id: `${signal.from}-${signal.sentAt}`,
           senderId: signal.from,
@@ -240,9 +306,9 @@ export function useWalkieRadio(options: {
         lastSpeakerActivityRef.current.set(signal.from, signal.sentAt);
         if (!remoteCallStartedRef.current.has(signal.from)) {
           remoteCallStartedRef.current.set(signal.from, signal.sentAt);
-          setActiveSpeaker({ id: signal.from, name: signal.senderName });
+          setRemoteSpeaker({ id: signal.from, name: signal.senderName });
         }
-        await playRemotePcm(signal.pcm, signal.sampleRate);
+        await playRemotePcm(signal.from, signal.pcm, signal.sampleRate);
       }
     };
 
@@ -260,8 +326,13 @@ export function useWalkieRadio(options: {
         setChannelReady(ready);
         setIsConnecting(!ready && status !== 'CHANNEL_ERROR' && status !== 'TIMED_OUT' && status !== 'CLOSED');
         if (ready) {
+          presenceRef.current.set(cloudContext.user.id, Date.now());
+          refreshPresence();
           void sendSignal({ kind: 'presence' });
           setError('');
+          if (wasAudioUnlocked()) {
+            void ensurePlaybackContext().catch(() => undefined);
+          }
         }
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           setError('Canal radio indisponible. Vérifie la connexion.');
@@ -270,20 +341,24 @@ export function useWalkieRadio(options: {
 
     channelRef.current = channel;
     presenceTimerRef.current = window.setInterval(() => {
+      presenceRef.current.set(cloudContext.user.id, Date.now());
       void sendSignal({ kind: 'presence' });
       refreshPresence();
-      clearStaleSpeaker();
-    }, 4_000);
+    }, PRESENCE_INTERVAL_MS);
+
+    staleTimerRef.current = window.setInterval(clearStaleSpeaker, STALE_CHECK_MS);
 
     return () => {
       window.clearInterval(presenceTimerRef.current);
+      window.clearInterval(staleTimerRef.current);
       channelRef.current = null;
       presenceRef.current.clear();
+      remoteSpeakerRef.current = null;
       setOnlineCount(0);
       setChannelReady(false);
       void cloudContext.supabase.removeChannel(channel);
     };
-  }, [cloudContext, clearStaleSpeaker, ensurePlaybackContext, playRemotePcm, refreshPresence, sendSignal]);
+  }, [cloudContext, clearStaleSpeaker, ensurePlaybackContext, playRemotePcm, refreshPresence, sendSignal, setRemoteSpeaker]);
 
   const stopTransmission = useCallback(async () => {
     releaseRequestedRef.current = true;
@@ -297,23 +372,30 @@ export function useWalkieRadio(options: {
     try {
       processorRef.current?.disconnect();
       sourceRef.current?.disconnect();
+      muteGainRef.current?.disconnect();
     } catch {
       // ignore
     }
     processorRef.current = null;
     sourceRef.current = null;
+    muteGainRef.current = null;
+
+    // Keep the mic permission/stream alive — only mute tracks between presses.
+    streamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = false;
+    });
 
     if (captureCtxRef.current) {
       void captureCtxRef.current.close().catch(() => undefined);
       captureCtxRef.current = null;
     }
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
 
     setIsTransmitting(false);
     setElapsedMs(0);
-    setActiveSpeaker((speaker) => (speaker?.id === cloudContext?.user.id ? null : speaker));
+    remoteSpeakerRef.current = null;
+    setActiveSpeaker(null);
     lastSpeakerActivityRef.current.delete(cloudContext?.user.id || '');
+    nextPlayTimeBySpeakerRef.current.delete('local');
     await sendSignal({ kind: 'ptt-stop' });
     setCalls((items) => [{
       id: `me-${Date.now()}`,
@@ -325,8 +407,7 @@ export function useWalkieRadio(options: {
   }, [cloudContext, sendSignal]);
 
   const startTransmission = useCallback(async () => {
-    const someoneElseSpeaking = activeSpeaker && activeSpeaker.id !== cloudContext?.user.id;
-    if (transmittingRef.current || someoneElseSpeaking || !cloudContext || !channelReady) return;
+    if (transmittingRef.current || isRemoteSpeakerActive() || !cloudContext || !channelReady) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       setError('Le micro n’est pas pris en charge sur ce navigateur.');
       return;
@@ -336,16 +417,11 @@ export function useWalkieRadio(options: {
     releaseRequestedRef.current = false;
     try {
       await ensurePlaybackContext();
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-        },
-      });
+      const stream = await ensureMicStream();
       if (releaseRequestedRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
+        stream.getAudioTracks().forEach((track) => {
+          track.enabled = false;
+        });
         return;
       }
 
@@ -362,7 +438,7 @@ export function useWalkieRadio(options: {
         const downsampled = downsample(input, captureCtx.sampleRate, TARGET_SAMPLE_RATE);
         const pcm = floatToInt16Base64(downsampled);
         try {
-          playPcmBuffer(playbackCtx, downsampled, TARGET_SAMPLE_RATE);
+          playPcmBuffer(playbackCtx, downsampled, TARGET_SAMPLE_RATE, 'local');
         } catch {
           // sidetone optional if playback context suspended
         }
@@ -377,17 +453,18 @@ export function useWalkieRadio(options: {
       processor.connect(mute);
       mute.connect(captureCtx.destination);
 
-      streamRef.current = stream;
       captureCtxRef.current = captureCtx;
       sourceRef.current = source;
       processorRef.current = processor;
+      muteGainRef.current = mute;
       startedAtRef.current = Date.now();
       transmittingRef.current = true;
       setIsTransmitting(true);
       setElapsedMs(0);
+      remoteSpeakerRef.current = null;
       setActiveSpeaker({ id: cloudContext.user.id, name: senderNameRef.current });
       lastSpeakerActivityRef.current.set(cloudContext.user.id, Date.now());
-      nextPlayTimeRef.current = 0;
+      nextPlayTimeBySpeakerRef.current.delete('local');
       await sendSignal({ kind: 'ptt-start' });
       elapsedTimerRef.current = window.setInterval(
         () => setElapsedMs(Date.now() - startedAtRef.current),
@@ -395,17 +472,23 @@ export function useWalkieRadio(options: {
       );
       stopTimerRef.current = window.setTimeout(() => void stopTransmission(), MAX_TRANSMISSION_MS);
     } catch (err) {
-      setError((err as DOMException)?.name === 'NotAllowedError'
-        ? 'Autorise le micro pour utiliser le talkie-walkie.'
-        : 'Impossible d’accéder au micro.');
+      const denied = (err as DOMException)?.name === 'NotAllowedError';
+      setError(
+        denied
+          ? wasMicGranted()
+            ? 'Micro bloqué — réactive-le dans les réglages du navigateur.'
+            : 'Autorise le micro une fois pour utiliser le talkie-walkie.'
+          : 'Impossible d’accéder au micro.'
+      );
       transmittingRef.current = false;
       setIsTransmitting(false);
     }
   }, [
-    activeSpeaker,
     channelReady,
     cloudContext,
+    ensureMicStream,
     ensurePlaybackContext,
+    isRemoteSpeakerActive,
     playPcmBuffer,
     sendSignal,
     stopTransmission,
@@ -415,6 +498,7 @@ export function useWalkieRadio(options: {
     window.clearTimeout(stopTimerRef.current);
     window.clearInterval(elapsedTimerRef.current);
     window.clearInterval(presenceTimerRef.current);
+    window.clearInterval(staleTimerRef.current);
     processorRef.current?.disconnect();
     sourceRef.current?.disconnect();
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -422,10 +506,7 @@ export function useWalkieRadio(options: {
     void playbackCtxRef.current?.close().catch(() => undefined);
   }, []);
 
-  const crewOnline = Math.min(
-    Math.max(0, friends.length - 1),
-    onlineCount
-  );
+  const crewOnline = Math.min(friends.length, onlineCount);
 
   return {
     isConnecting,
