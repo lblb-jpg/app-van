@@ -12,7 +12,18 @@ import {
   ImagePlus,
 } from 'lucide-react';
 import { Waypoint } from '../types';
-import { StepFormModal } from './StepFormModal';
+import { FRANCE_MAP_CENTER } from '../lib/mapDefaults';
+import { hasValidCoords } from '../lib/mapCoords';
+import { SimpleFormModal } from './SimpleFormModal';
+import {
+  CompactFormChip,
+  CompactFormField,
+  CompactFormHero,
+  CompactFormRoot,
+  CompactFormSection,
+  CompactFormTextInput,
+  FormModalFooter,
+} from './CompactFormLayout';
 
 const withoutSource = (notes?: string) =>
   notes
@@ -20,11 +31,6 @@ const withoutSource = (notes?: string) =>
     .trim() || '';
 
 const MAX_WAYPOINT_PHOTOS = 6;
-
-const ADD_STEPS = [
-  { id: 1, label: 'Essentiel', hint: 'Nom et lieu' },
-  { id: 2, label: 'Détails', hint: 'GPS, photos & confort' },
-] as const;
 
 const AMENITY_OPTIONS = [
   { id: 'eau', label: '🚰 Eau' },
@@ -65,7 +71,7 @@ interface WaypointsManagerProps {
   onUpdateWaypointStatus: (id: string, status: 'done' | 'active' | 'upcoming') => void;
   onReorderWaypoint: (id: string, direction: 'up' | 'down') => void;
   onDeleteWaypoint: (id: string) => void;
-  onSelectOnMap: (lat: number, lng: number) => void;
+  onSelectOnMap: (lat: number, lng: number, label?: string, emoji?: string) => void;
 }
 
 export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
@@ -77,15 +83,13 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
   onSelectOnMap
 }) => {
   const [showAddModal, setShowAddModal] = useState(false);
-  const [addStep, setAddStep] = useState(1);
   const [expandedWaypointId, setExpandedWaypointId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [locationName, setLocationName] = useState('');
-  const [lat, setLat] = useState('45.8992');
-  const [lng, setLng] = useState('6.1294');
-  const [vanSpotType, setVanSpotType] = useState('Wild Spot / Parking discret');
+  const [lat, setLat] = useState('');
+  const [lng, setLng] = useState('');
   const [notes, setNotes] = useState('');
-  const [amenities, setAmenities] = useState<string[]>(['eau', 'gratuit', 'vue_panoramique']);
+  const [amenities, setAmenities] = useState<string[]>([]);
   const [photos, setPhotos] = useState<string[]>([]);
   const [photoError, setPhotoError] = useState('');
   const photoInputRef = useRef<HTMLInputElement>(null);
@@ -96,11 +100,9 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
     setNotes('');
     setPhotos([]);
     setPhotoError('');
-    setAmenities(['eau', 'gratuit', 'vue_panoramique']);
-    setVanSpotType('Wild Spot / Parking discret');
-    setLat('45.8992');
-    setLng('6.1294');
-    setAddStep(1);
+    setAmenities([]);
+    setLat('');
+    setLng('');
   };
 
   const openAddModal = () => {
@@ -113,42 +115,40 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
     setShowAddModal(false);
   };
 
-  const canAdvanceFromStep = (step: number) => {
-    if (step === 1) return Boolean(title.trim() && locationName.trim());
-    if (step === 2) {
-      const parsedLat = parseFloat(lat);
-      const parsedLng = parseFloat(lng);
-      return Number.isFinite(parsedLat) && Number.isFinite(parsedLng);
-    }
-    return true;
-  };
-
-  const goToNextStep = () => {
-    if (!canAdvanceFromStep(addStep)) return;
-    setAddStep((current) => Math.min(ADD_STEPS.length, current + 1));
-  };
-
-  const goToPreviousStep = () => {
-    setAddStep((current) => Math.max(1, current - 1));
-  };
+  const canSubmitWaypoint = Boolean(title.trim() && locationName.trim());
 
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim() || !locationName.trim()) return;
+    if (!canSubmitWaypoint) return;
+
+    const parsedLat = parseFloat(lat);
+    const parsedLng = parseFloat(lng);
+    const hasCoords = Number.isFinite(parsedLat) && Number.isFinite(parsedLng);
 
     onAddWaypoint({
       order: waypoints.length + 1,
       title: title.trim(),
       locationName: locationName.trim(),
-      lat: parseFloat(lat) || 45.8992,
-      lng: parseFloat(lng) || 6.1294,
+      lat: hasCoords ? parsedLat : 0,
+      lng: hasCoords ? parsedLng : 0,
       status: 'upcoming',
-      vanSpotType: vanSpotType.trim(),
-      notes: notes.trim(),
-      amenities,
+      notes: notes.trim() || undefined,
+      amenities: amenities.length ? amenities : undefined,
       photos: photos.length ? photos : undefined,
     });
 
+    closeAddModal();
+  };
+
+  const pickOnMap = () => {
+    const parsedLat = parseFloat(lat);
+    const parsedLng = parseFloat(lng);
+    if (Number.isFinite(parsedLat) && Number.isFinite(parsedLng) && hasValidCoords(parsedLat, parsedLng)) {
+      onSelectOnMap(parsedLat, parsedLng, title.trim() || locationName.trim(), '📍');
+      closeAddModal();
+      return;
+    }
+    onSelectOnMap(FRANCE_MAP_CENTER.lat, FRANCE_MAP_CENTER.lng, title.trim() || locationName.trim(), '📍');
     closeAddModal();
   };
 
@@ -310,15 +310,17 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
 
                   {/* Actions & Up/Down Ordering */}
                   <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    {hasValidCoords(wp.lat, wp.lng) && (
                     <button
                       type="button"
-                      onClick={() => onSelectOnMap(wp.lat, wp.lng)}
+                      onClick={() => onSelectOnMap(wp.lat, wp.lng, wp.title, `${wp.order}`)}
                       className="touch-target flex items-center justify-center rounded-xl bg-zinc-900 text-white hover:bg-zinc-800 transition-colors"
                       title={`Voir ${wp.title} sur la carte`}
                       aria-label={`Voir ${wp.title} sur la carte`}
                     >
                       <Navigation className="w-3.5 h-3.5 text-emerald-400" />
                     </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setExpandedWaypointId(isExpanded ? null : wp.id)}
@@ -430,142 +432,126 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
         )}
       </div>
 
-      <StepFormModal
+      <SimpleFormModal
         isOpen={showAddModal}
         onClose={closeAddModal}
         title="Ajouter une étape"
-        icon={<Milestone className="h-5 w-5 text-emerald-300" />}
-        steps={ADD_STEPS}
-        currentStep={addStep}
-        onStepClick={setAddStep}
-        canAdvanceFromStep={canAdvanceFromStep}
-        onNext={goToNextStep}
-        onPrevious={goToPreviousStep}
-        onSubmit={handleCreateSubmit}
-        submitLabel="Ajouter l'étape"
+        subtitle="Nom · lieu · détails"
+        icon={<Milestone className="h-4 w-4" />}
         titleId="add-waypoint-title"
+        onSubmit={handleCreateSubmit}
+        footer={
+          <FormModalFooter
+            onCancel={closeAddModal}
+            submitLabel="Ajouter l'étape"
+            canSubmit={canSubmitWaypoint}
+            submitTone="sunset"
+          />
+        }
       >
-        {addStep === 1 && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-bold text-[#17352b]">Nom de l'étape *</span>
-              <input
-                type="text"
+        <CompactFormRoot>
+          <CompactFormHero>
+            <CompactFormField label="Nom *" tone="hero">
+              <CompactFormTextInput
+                tone="hero"
                 required
-                placeholder="ex: Bivouac Lac du Mont-Cenis"
+                placeholder="Bivouac au lac, aire de nuit…"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                className="w-full rounded-xl border border-[#17352b]/12 bg-white px-3.5 py-3 text-sm font-semibold text-[#17352b] placeholder:text-[#68756d]/50 focus:outline-hidden focus:ring-2 focus:ring-[#17352b]/20"
+                className="font-extrabold"
               />
-            </label>
-
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-bold text-[#17352b]">Commune / Ville *</span>
-              <input
-                type="text"
+            </CompactFormField>
+            <CompactFormField label="Lieu *" tone="hero">
+              <CompactFormTextInput
+                tone="hero"
                 required
-                placeholder="ex: Lanslebourg-Mont-Cenis"
+                placeholder="Ville, spot, adresse…"
                 value={locationName}
                 onChange={(e) => setLocationName(e.target.value)}
-                className="w-full rounded-xl border border-[#17352b]/12 bg-white px-3.5 py-3 text-sm font-semibold text-[#17352b] placeholder:text-[#68756d]/50 focus:outline-hidden focus:ring-2 focus:ring-[#17352b]/20"
               />
-            </label>
+            </CompactFormField>
+          </CompactFormHero>
 
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-bold text-[#17352b]">Type de spot van</span>
-              <input
-                type="text"
-                placeholder="Wild spot, aire naturelle, camping…"
-                value={vanSpotType}
-                onChange={(e) => setVanSpotType(e.target.value)}
-                className="w-full rounded-xl border border-[#17352b]/12 bg-white px-3.5 py-3 text-sm font-medium text-[#17352b] placeholder:text-[#68756d]/50 focus:outline-hidden focus:ring-2 focus:ring-[#17352b]/20"
+          <CompactFormSection>
+            <CompactFormField label="Notes">
+              <CompactFormTextInput
+                placeholder="Heure, eau, calme…"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
               />
-            </label>
-          </div>
-        )}
+            </CompactFormField>
 
-        {addStep === 2 && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-            <div className="rounded-xl border border-[#17352b]/10 bg-[#17352b] p-4 text-white">
-              <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-emerald-300">Récapitulatif</p>
-              <p className="mt-1 truncate text-base font-extrabold">{title || 'Sans titre'}</p>
-              <p className="mt-0.5 truncate text-[11px] font-medium text-white/70">{locationName || 'Lieu non renseigné'}</p>
-              {vanSpotType && (
-                <span className="mt-2 inline-block rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-bold text-emerald-200">
-                  🚐 {vanSpotType}
+            <div>
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-[#68756d]">
+                  GPS (optionnel)
                 </span>
-              )}
-            </div>
-
-            <div className="rounded-xl border border-[#17352b]/10 bg-[#f5f1e7] p-3.5">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-[11px] font-bold text-[#17352b]">Position GPS *</p>
-                  <p className="mt-1 font-mono text-[12px] font-semibold text-[#68756d]">
-                    {parseFloat(lat).toFixed(5)}, {parseFloat(lng).toFixed(5)}
-                  </p>
-                </div>
-                <MapPin className="h-5 w-5 shrink-0 text-emerald-600" />
+                <button
+                  type="button"
+                  onClick={pickOnMap}
+                  className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-700 hover:underline"
+                >
+                  <Navigation className="h-3 w-3" />
+                  Carte
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <CompactFormTextInput
+                  inputMode="decimal"
+                  placeholder="Lat."
+                  value={lat}
+                  onChange={(e) => setLat(e.target.value)}
+                />
+                <CompactFormTextInput
+                  inputMode="decimal"
+                  placeholder="Lng."
+                  value={lng}
+                  onChange={(e) => setLng(e.target.value)}
+                />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block space-y-1.5">
-                <span className="text-[11px] font-bold text-[#17352b]">Latitude</span>
-                <input
-                  type="number"
-                  step="any"
-                  value={lat}
-                  onChange={(e) => setLat(e.target.value)}
-                  className="w-full rounded-xl border border-[#17352b]/12 bg-white px-3.5 py-3 font-mono text-sm text-[#17352b] focus:outline-hidden focus:ring-2 focus:ring-[#17352b]/20"
-                />
-              </label>
-              <label className="block space-y-1.5">
-                <span className="text-[11px] font-bold text-[#17352b]">Longitude</span>
-                <input
-                  type="number"
-                  step="any"
-                  value={lng}
-                  onChange={(e) => setLng(e.target.value)}
-                  className="w-full rounded-xl border border-[#17352b]/12 bg-white px-3.5 py-3 font-mono text-sm text-[#17352b] focus:outline-hidden focus:ring-2 focus:ring-[#17352b]/20"
-                />
-              </label>
+            <div>
+              <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-[#68756d]">
+                Commodités
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {AMENITY_OPTIONS.map((item) => (
+                  <CompactFormChip
+                    key={item.id}
+                    active={amenities.includes(item.id)}
+                    onClick={() => toggleAmenity(item.id)}
+                  >
+                    {item.label}
+                  </CompactFormChip>
+                ))}
+              </div>
             </div>
 
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-bold text-[#17352b]">Notes / remarques</span>
-              <textarea
-                rows={3}
-                placeholder="Heure limite d'arrivée, fontaine d'eau, calme…"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="w-full resize-none rounded-xl border border-[#17352b]/12 bg-white px-3.5 py-3 text-sm text-[#17352b] placeholder:text-[#68756d]/50 focus:outline-hidden focus:ring-2 focus:ring-[#17352b]/20"
-              />
-            </label>
-
             <div>
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-[11px] font-bold text-[#17352b]">Photos du spot</span>
-                <span className="text-[10px] font-bold text-[#68756d]">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-[#68756d]">
+                  Photos
+                </span>
+                <span className="text-[9px] font-bold text-[#68756d]">
                   {photos.length}/{MAX_WAYPOINT_PHOTOS}
                 </span>
               </div>
               {photos.length > 0 && (
-                <div className="mb-2 grid grid-cols-3 gap-2">
+                <div className="mb-1.5 grid grid-cols-4 gap-1">
                   {photos.map((src, index) => (
                     <div key={`new-photo-${index}`} className="relative">
                       <img
                         src={src}
-                        alt={`Photo ${index + 1}`}
-                        className="h-24 w-full rounded-xl border border-[#17352b]/10 object-cover"
+                        alt=""
+                        className="h-14 w-full rounded-lg border border-[#17352b]/10 object-cover"
                       />
                       <button
                         type="button"
                         onClick={() => setPhotos((prev) => prev.filter((_, i) => i !== index))}
-                        className="absolute top-1.5 right-1.5 rounded-full bg-[#17352b]/75 p-1 text-white"
-                        title="Retirer la photo"
+                        className="absolute top-0.5 right-0.5 rounded-full bg-[#17352b]/75 p-0.5 text-white"
                       >
-                        <X className="h-3 w-3" />
+                        <X className="h-2.5 w-2.5" />
                       </button>
                     </div>
                   ))}
@@ -575,10 +561,10 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                 type="button"
                 onClick={() => photoInputRef.current?.click()}
                 disabled={photos.length >= MAX_WAYPOINT_PHOTOS}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#17352b]/20 bg-white px-3.5 py-3 text-xs font-bold text-[#68756d] transition-colors hover:border-emerald-500 hover:bg-emerald-50/60 hover:text-emerald-800 disabled:pointer-events-none disabled:opacity-40"
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#17352b]/15 bg-white px-2 py-1.5 text-[10px] font-bold text-[#68756d] disabled:opacity-40"
               >
-                {photos.length ? <ImagePlus className="h-4 w-4" /> : <Camera className="h-4 w-4" />}
-                {photos.length ? 'Ajouter d\u2019autres photos' : 'Importer des photos'}
+                {photos.length ? <ImagePlus className="h-3.5 w-3.5" /> : <Camera className="h-3.5 w-3.5" />}
+                {photos.length ? 'Ajouter' : 'Importer des photos'}
               </button>
               <input
                 ref={photoInputRef}
@@ -588,37 +574,13 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                 className="hidden"
                 onChange={(e) => void handlePhotosSelected(e)}
               />
-              {photoError ? (
-                <p className="mt-1.5 text-[10px] font-semibold text-amber-700">{photoError}</p>
-              ) : (
-                <p className="mt-1.5 text-[10px] font-medium text-[#68756d]">
-                  JPG / PNG, jusqu'à {MAX_WAYPOINT_PHOTOS} photos
-                </p>
+              {photoError && (
+                <p className="mt-1 text-[9px] font-semibold text-amber-700">{photoError}</p>
               )}
             </div>
-
-            <div>
-              <span className="mb-2 block text-[11px] font-bold text-[#17352b]">Commodités du spot</span>
-              <div className="flex flex-wrap gap-1.5">
-                {AMENITY_OPTIONS.map((item) => (
-                  <button
-                    type="button"
-                    key={item.id}
-                    onClick={() => toggleAmenity(item.id)}
-                    className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors ${
-                      amenities.includes(item.id)
-                        ? 'bg-[#17352b] text-white'
-                        : 'bg-[#f5f1e7] text-[#68756d] ring-1 ring-[#17352b]/10 hover:bg-[#ebe4d4]'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </StepFormModal>
+          </CompactFormSection>
+        </CompactFormRoot>
+      </SimpleFormModal>
     </div>
   );
 };

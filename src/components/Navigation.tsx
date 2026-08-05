@@ -2,13 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Map,
-  Navigation as GpsIcon,
   Milestone,
   BookOpen,
   Receipt,
-  Radio,
-  Mic2,
-  Compass,
   User,
   Download,
   Wifi,
@@ -20,8 +16,9 @@ import {
   MapPin,
   AlertTriangle,
   BedDouble,
+  Menu,
+  RefreshCw,
 } from 'lucide-react';
-import { motion } from 'motion/react';
 import { TabType, Friend } from '../types';
 import { isIosDevice, isStandalonePwa } from '../lib/pwa';
 import type { GeoStatus } from '../services/geolocation';
@@ -34,15 +31,35 @@ interface NavigationProps {
   friends: Friend[];
   currentFriendId: string;
   setCurrentFriendId: (id: string) => void;
-  isGpsRecording: boolean;
   geoStatus?: GeoStatus;
   hasUserLocation?: boolean;
   booting?: boolean;
+  isRefreshing?: boolean;
   syncError?: string;
   onDismissSyncError?: () => void;
+  onRefresh?: () => void;
+  immersive?: boolean;
 }
 
 const INSTALL_DISMISS_KEY = 'van_install_dismissed_v1';
+
+const NAV_ITEMS: {
+  id: TabType;
+  label: string;
+  hint: string;
+  icon: React.ReactNode;
+  badge?: boolean;
+}[] = [
+  { id: 'map', label: 'Carte', hint: 'Spots & itinéraire', icon: <Map className="h-5 w-5" /> },
+  { id: 'sleep', label: 'Dormir', hint: 'Spots bivouac', icon: <BedDouble className="h-5 w-5" /> },
+  { id: 'waypoints', label: 'Étapes', hint: 'Arrêts du voyage', icon: <Milestone className="h-5 w-5" /> },
+  { id: 'journal', label: 'Journal', hint: 'Notes & photos', icon: <BookOpen className="h-5 w-5" /> },
+  { id: 'budget', label: 'VanPay', hint: 'Budget équipage', icon: <Receipt className="h-5 w-5" /> },
+];
+
+function tabLabel(tab: TabType) {
+  return NAV_ITEMS.find((item) => item.id === tab)?.label ?? 'Vanlife Club';
+}
 
 export const Navigation: React.FC<NavigationProps> = ({
   activeTab,
@@ -50,14 +67,17 @@ export const Navigation: React.FC<NavigationProps> = ({
   friends,
   currentFriendId,
   setCurrentFriendId,
-  isGpsRecording,
   geoStatus,
   hasUserLocation = false,
   booting = false,
+  isRefreshing = false,
   syncError = '',
   onDismissSyncError,
+  onRefresh,
+  immersive = false,
 }) => {
   const status: GeoStatus = geoStatus ?? { state: 'idle' };
+  const [menuOpen, setMenuOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallHint, setShowInstallHint] = useState(false);
@@ -71,7 +91,6 @@ export const Navigation: React.FC<NavigationProps> = ({
   const geoErrorText = status.state === 'error' ? status.message : '';
   const isPermissionNag =
     /autorise|permission|localisation dans le navigateur/i.test(geoErrorText);
-  // Once GPS was accepted, ignore transient / non-permission errors as toast spam.
   const showGeoToast = Boolean(
     geoErrorText &&
       geoErrorText !== dismissedGeoError &&
@@ -84,16 +103,24 @@ export const Navigation: React.FC<NavigationProps> = ({
   }, [status]);
 
   useEffect(() => {
+    if (!menuOpen) return;
+    const html = document.documentElement;
+    const prev = html.style.overflow;
+    html.style.overflow = 'hidden';
+    return () => {
+      html.style.overflow = prev;
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
     const dismissed = localStorage.getItem(INSTALL_DISMISS_KEY) === '1';
-    if (!standalone && !dismissed) {
-      if (isIosDevice()) {
-        setShowInstallHint(true);
-      }
+    if (!standalone && !dismissed && isIosDevice()) {
+      setShowInstallHint(true);
     }
 
     const handleBeforeInstall = (e: Event) => {
@@ -131,298 +158,237 @@ export const Navigation: React.FC<NavigationProps> = ({
       localStorage.setItem(INSTALL_DISMISS_KEY, '1');
       return;
     }
-    if (isIosDevice()) {
-      setShowIosHelp(true);
-      return;
-    }
     setShowIosHelp(true);
   };
 
+  const navigateTo = (tab: TabType) => {
+    setActiveTab(tab);
+    setMenuOpen(false);
+  };
+
+  const menu = menuOpen && (
+    <div className="van-menu" role="presentation">
+      <button
+        type="button"
+        className="van-menu__backdrop"
+        aria-label="Fermer le menu"
+        onClick={() => setMenuOpen(false)}
+      />
+      <aside className="van-menu__panel" role="dialog" aria-modal="true" aria-label="Menu principal">
+        <div className="van-menu__head">
+          <div>
+            <p className="van-menu__kicker">Navigation</p>
+            <h2 className="van-menu__title">Vanlife Club</h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMenuOpen(false)}
+            className="van-menu__close"
+            aria-label="Fermer"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <nav className="van-menu__list" aria-label="Sections de l'application">
+          {NAV_ITEMS.map((item) => {
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => navigateTo(item.id)}
+                aria-current={isActive ? 'page' : undefined}
+                className={`van-menu__item ${isActive ? 'is-active' : ''}`}
+              >
+                <span className="van-menu__item-icon">{item.icon}</span>
+                <span className="van-menu__item-text">
+                  <span className="van-menu__item-label">{item.label}</span>
+                  <span className="van-menu__item-hint">{item.hint}</span>
+                </span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="van-menu__foot">
+          <div className="van-menu__status">
+            {isOnline ? (
+              <span className="text-[#36866b]"><Wifi className="inline h-3.5 w-3.5" /> En ligne</span>
+            ) : (
+              <span className="text-amber-700"><WifiOff className="inline h-3.5 w-3.5" /> Hors-ligne</span>
+            )}
+            {hasUserLocation && (
+              <span className="text-[#36866b]"><MapPin className="inline h-3.5 w-3.5" /> GPS actif</span>
+            )}
+          </div>
+        </div>
+      </aside>
+    </div>
+  );
+
   return (
     <>
-      <header className="van-header w-full px-3 pt-[max(0.5rem,env(safe-area-inset-top))] sm:px-6 sm:pt-[max(0.75rem,env(safe-area-inset-top))]">
-        <div className="van-header__inner mx-auto flex max-w-6xl items-center justify-between rounded-[1.35rem] px-3 py-2 sm:rounded-[1.6rem] sm:px-4 sm:py-2.5">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="van-brand-mark relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[1rem] text-white sm:h-11 sm:w-11 sm:rounded-[1.1rem]">
-              <Compass className="relative z-10 h-5 w-5" />
-              <span className="absolute -bottom-3 -right-3 h-8 w-8 rounded-full bg-orange-400" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h1 className="van-wordmark truncate text-[16px] font-extrabold leading-none tracking-[-0.04em] text-[#17352b] sm:text-[17px]">
-                  Vanlife <span className="text-[#eb6c32]">Club</span>
-                </h1>
-                {isGpsRecording && (
-                  <span className="flex items-center gap-1.5 rounded-full bg-red-50 px-2 py-0.5 text-[9px] font-extrabold text-red-600 ring-1 ring-red-200 animate-pulse">
-                    <span className="h-1.5 w-1.5 rounded-full bg-red-500" /> REC
-                  </span>
-                )}
-                {standalone && (
-                  <span className="hidden xs:inline text-[9px] font-extrabold uppercase tracking-wider text-[#36866b] bg-[#e6f3eb] px-1.5 py-0.5 rounded-full">
-                    App
-                  </span>
-                )}
-              </div>
-              <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] font-bold tracking-wide text-[#6f786f] min-w-0">
-                {booting ? (
-                  <span className="flex items-center gap-1 text-[#6f786f]">
-                    <LoaderCircle className="h-3 w-3 animate-spin" /> Connexion…
-                  </span>
-                ) : !hasUserLocation && status.state === 'locating' ? (
-                  <span className="flex items-center gap-1 text-[#6f786f]">
-                    <LoaderCircle className="h-3 w-3 animate-spin" /> GPS…
-                  </span>
-                ) : hasUserLocation ? (
-                  <span className="flex items-center gap-1 text-[#36866b]">
-                    <MapPin className="h-3 w-3" /> GPS
-                  </span>
-                ) : status.state === 'error' ? (
-                  <span className="flex items-center gap-1 text-amber-700">
-                    <AlertTriangle className="h-3 w-3" /> GPS off
-                  </span>
-                ) : null}
-                {(booting || hasUserLocation || status.state === 'locating' || status.state === 'error') && (
-                  <span className="text-[#c5cbc4]">·</span>
-                )}
-                {isOnline ? (
-                  <span className="flex items-center gap-1 text-[#36866b]">
-                    <Wifi className="h-3 w-3" /> En ligne
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1 text-amber-700">
-                    <WifiOff className="h-3 w-3" /> Hors-ligne
-                  </span>
-                )}
-              </p>
-            </div>
+      <header className={`van-header ${immersive ? 'van-header--immersive' : ''}`}>
+        <div className={`van-header__inner ${immersive ? 'van-header__inner--immersive' : ''}`}>
+          <div className="van-header__title min-w-0 flex-1">
+            <p className="van-header__kicker">Vanlife Club</p>
+            <h1 className="van-header__page truncate">{tabLabel(activeTab)}</h1>
           </div>
 
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                if (onRefresh) {
+                  onRefresh();
+                } else {
+                  window.location.reload();
+                }
+              }}
+              disabled={isRefreshing || booting}
+              className="van-header__icon-btn"
+              title="Rafraîchir l\u2019application"
+              aria-label="Rafraîchir l\u2019application"
+            >
+              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            </button>
             {!standalone && (
               <button
                 type="button"
                 onClick={() => void handleInstallPwa()}
-                className="flex min-h-11 min-w-11 items-center justify-center rounded-xl bg-[#17352b] text-white"
-                title="Installer sur l’écran d’accueil"
-                aria-label="Installer l’application"
+                className="van-header__icon-btn"
+                title="Installer sur l\u2019écran d\u2019accueil"
+                aria-label="Installer l\u2019application"
               >
-                <Download className="w-4 h-4" />
+                <Download className="h-4 w-4" />
               </button>
             )}
-            <div className="relative flex items-center bg-zinc-100 rounded-full p-1 ring-1 ring-zinc-200">
+            <div className="van-header__user">
               {currentFriend ? (
-                <img
-                  src={currentFriend.avatar}
-                  alt={currentFriend.name}
-                  className="w-6 h-6 rounded-full object-cover ring-1 ring-white"
-                />
+                <img src={currentFriend.avatar} alt="" className="h-6 w-6 rounded-full object-cover" />
               ) : (
-                <div className="w-6 h-6 rounded-full bg-white text-zinc-400 flex items-center justify-center ring-1 ring-zinc-200">
-                  <User className="w-3.5 h-3.5" />
-                </div>
+                <User className="h-4 w-4 text-[#68756d]" />
               )}
               <select
                 value={currentFriendId}
                 onChange={(e) => setCurrentFriendId(e.target.value)}
                 disabled={!hasFriends}
-                aria-label="Changer d’utilisateur"
-                title="Changer d’utilisateur"
-                className="bg-transparent text-xs font-bold text-zinc-800 focus:outline-hidden pl-1.5 pr-5 max-w-20 sm:max-w-32 cursor-pointer appearance-none"
+                aria-label="Changer d\u2019utilisateur"
+                className="max-w-[5rem] cursor-pointer appearance-none bg-transparent pl-1 text-xs font-bold text-[#17352b] focus:outline-hidden sm:max-w-[7rem]"
               >
                 {!hasFriends && <option value={currentFriendId}>…</option>}
                 {friends.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.name}
-                  </option>
+                  <option key={f.id} value={f.id}>{f.name}</option>
                 ))}
               </select>
             </div>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setMenuOpen(true)}
+            className="van-burger"
+            aria-label="Ouvrir le menu"
+            aria-expanded={menuOpen}
+          >
+            <Menu className="h-5 w-5" />
+          </button>
         </div>
+
+        {(booting || isRefreshing || status.state === 'locating') && (
+          <p className="van-header__status">
+            <LoaderCircle className="h-3 w-3 animate-spin" />
+            {booting ? 'Connexion…' : isRefreshing ? 'Rafraîchissement…' : 'Localisation…'}
+          </p>
+        )}
       </header>
 
+      {menuOpen && typeof document !== 'undefined' && createPortal(menu, document.body)}
+
       {showInstallHint && !standalone && (
-        <div className="fixed inset-x-0 top-[var(--van-header-h)] z-40 px-3 sm:px-6">
+        <div className="van-install-banner">
           <div className="van-install-sheet flex flex-wrap items-center gap-3 rounded-2xl px-3.5 py-3">
-            <div className="w-9 h-9 rounded-xl bg-[#17352b] text-white flex items-center justify-center shrink-0">
-              <Download className="w-4 h-4" />
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#17352b] text-white">
+              <Download className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-xs font-extrabold text-[#17352b]">Installer Vanlife Club</p>
-              <p className="text-[11px] font-medium text-[#6f786f] leading-snug">
-                Sur l’écran d’accueil · GPS même hors-ligne
+              <p className="text-[0.7rem] font-medium leading-snug text-[#6f786f]">
+                Sur l\u2019écran d\u2019accueil · GPS hors-ligne
               </p>
             </div>
             <button
               type="button"
               onClick={() => void handleInstallPwa()}
-              className="shrink-0 min-h-11 px-3 py-2 rounded-xl bg-[#eb6c32] text-white text-[11px] font-bold"
+              className="min-h-10 shrink-0 rounded-xl bg-[#eb6c32] px-3 py-2 text-[0.7rem] font-bold text-white"
             >
               Installer
             </button>
-            <button
-              type="button"
-              onClick={dismissInstall}
-              className="touch-target flex items-center justify-center min-h-11 min-w-11 text-[#6f786f]"
-              aria-label="Fermer"
-            >
-              <X className="w-4 h-4" />
+            <button type="button" onClick={dismissInstall} className="touch-target min-h-10 min-w-10 text-[#6f786f]" aria-label="Fermer">
+              <X className="h-4 w-4" />
             </button>
           </div>
         </div>
       )}
 
       <ModalShell isOpen={showIosHelp} onClose={() => setShowIosHelp(false)} maxWidth="sm">
-        <div className="p-5 space-y-4 sm:p-6">
+        <div className="space-y-4 p-5 sm:p-6">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h3 className="font-extrabold text-base text-[#17352b]">Ajouter à l’écran d’accueil</h3>
-              <p className="text-[12px] text-[#6f786f] font-medium mt-1 leading-relaxed">
-                Pour l’utiliser comme une vraie app mobile.
+              <h3 className="text-base font-extrabold text-[#17352b]">Ajouter à l\u2019écran d\u2019accueil</h3>
+              <p className="mt-1 text-[0.75rem] font-medium leading-relaxed text-[#6f786f]">
+                Pour l\u2019utiliser comme une vraie app mobile.
               </p>
             </div>
-            <button type="button" onClick={() => setShowIosHelp(false)} className="touch-target flex items-center justify-center min-h-11 min-w-11 text-[#6f786f]">
-              <X className="w-5 h-5" />
+            <button type="button" onClick={() => setShowIosHelp(false)} className="touch-target min-h-10 min-w-10 text-[#6f786f]">
+              <X className="h-5 w-5" />
             </button>
           </div>
           <ol className="space-y-2.5">
             {[
-              { icon: <Share className="w-4 h-4" />, text: 'Touche Partager (carré avec flèche)' },
-              { icon: <Plus className="w-4 h-4" />, text: 'Choisis « Sur l’écran d’accueil »' },
-              { icon: <Download className="w-4 h-4" />, text: 'Valide — l’icône Vanlife Club apparaît' },
+              { icon: <Share className="h-4 w-4" />, text: 'Touche Partager (carré avec flèche)' },
+              { icon: <Plus className="h-4 w-4" />, text: 'Choisis « Sur l\u2019écran d\u2019accueil »' },
+              { icon: <Download className="h-4 w-4" />, text: 'Valide — l\u2019icône Vanlife Club apparaît' },
             ].map((step, i) => (
-              <li
-                key={i}
-                className="flex items-center gap-3 rounded-2xl bg-[#f5f1e7] px-3 py-2.5 text-[12px] font-semibold text-[#17352b]"
-              >
-                <span className="w-8 h-8 rounded-xl bg-white flex items-center justify-center text-[#eb6c32] shrink-0">
-                  {step.icon}
-                </span>
-                <span>
-                  <span className="text-[10px] font-bold text-[#6f786f] mr-1">{i + 1}.</span>
-                  {step.text}
-                </span>
+              <li key={i} className="flex items-center gap-3 rounded-2xl bg-[#f5f1e7] px-3 py-2.5 text-[0.75rem] font-semibold text-[#17352b]">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white text-[#eb6c32]">{step.icon}</span>
+                <span><span className="mr-1 text-[0.65rem] font-bold text-[#6f786f]">{i + 1}.</span>{step.text}</span>
               </li>
             ))}
           </ol>
-          <button
-            type="button"
-            onClick={dismissInstall}
-            className="w-full py-3 rounded-2xl bg-[#17352b] text-white text-xs font-bold pb-[max(0.75rem,env(safe-area-inset-bottom))]"
-          >
+          <button type="button" onClick={dismissInstall} className="w-full rounded-2xl bg-[#17352b] py-3 text-xs font-bold text-white">
             Compris
           </button>
         </div>
       </ModalShell>
 
       {(showGeoToast || showSyncToast) && (
-        <div className="fixed inset-x-0 bottom-[var(--van-bottom-nav-h)] z-40 px-3 pointer-events-none">
-          <div className="mx-auto max-w-3xl space-y-2 pointer-events-auto">
+        <div className="van-toast-bar">
+          <div className="mx-auto max-w-3xl space-y-2">
             {showSyncToast && (
               <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 shadow-lg">
-                <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-                <p className="flex-1 text-[11px] font-semibold text-amber-900 leading-snug">{syncError}</p>
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                <p className="flex-1 text-[0.7rem] font-semibold leading-snug text-amber-900">{syncError}</p>
                 {onDismissSyncError && (
-                  <button type="button" onClick={onDismissSyncError} className="p-0.5 text-amber-700" aria-label="Fermer">
-                    <X className="w-4 h-4" />
+                  <button type="button" onClick={onDismissSyncError} className="text-amber-700" aria-label="Fermer">
+                    <X className="h-4 w-4" />
                   </button>
                 )}
               </div>
             )}
             {showGeoToast && (
               <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 shadow-lg">
-                <MapPin className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-                <p className="flex-1 text-[11px] font-semibold text-amber-900 leading-snug">{geoErrorText}</p>
-                <button
-                  type="button"
-                  onClick={() => setDismissedGeoError(geoErrorText)}
-                  className="p-0.5 text-amber-700"
-                  aria-label="Fermer"
-                >
-                  <X className="w-4 h-4" />
+                <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+                <p className="flex-1 text-[0.7rem] font-semibold leading-snug text-amber-900">{geoErrorText}</p>
+                <button type="button" onClick={() => setDismissedGeoError(geoErrorText)} className="text-amber-700" aria-label="Fermer">
+                  <X className="h-4 w-4" />
                 </button>
               </div>
             )}
           </div>
         </div>
       )}
-
     </>
   );
-};
-
-interface VanBottomNavProps {
-  activeTab: TabType;
-  setActiveTab: (tab: TabType) => void;
-  isGpsRecording: boolean;
-}
-
-export const VanBottomNav: React.FC<VanBottomNavProps> = ({
-  activeTab,
-  setActiveTab,
-  isGpsRecording,
-}) => {
-  const navItems: { id: TabType; label: string; icon: React.ReactNode; badge?: boolean }[] = [
-    { id: 'map', label: 'Carte', icon: <Map /> },
-    { id: 'sleep', label: 'Dormir', icon: <BedDouble /> },
-    { id: 'gps', label: 'GPS', icon: <GpsIcon />, badge: isGpsRecording },
-    { id: 'radio', label: 'Talkie', icon: <Mic2 /> },
-    { id: 'waypoints', label: 'Étapes', icon: <Milestone /> },
-    { id: 'journal', label: 'Journal', icon: <BookOpen /> },
-    { id: 'budget', label: 'VanPay', icon: <Receipt /> },
-    { id: 'radar', label: 'Radar', icon: <Radio /> },
-  ];
-
-  const nav = (
-    <nav className="van-bottom-nav" aria-label="Navigation principale">
-      <div className="flex w-full items-stretch justify-around gap-0.5 px-1 py-1.5 sm:gap-1 sm:px-2 sm:py-2">
-        {navItems.map((item) => {
-          const isActive = activeTab === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setActiveTab(item.id)}
-              aria-current={isActive ? 'page' : undefined}
-              aria-label={item.label}
-              className="van-nav-item relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl px-0.5 py-1.5 sm:rounded-[1.1rem]"
-            >
-              {isActive && (
-                <motion.span
-                  layoutId="van-nav-bubble"
-                  className="van-nav-item__bubble absolute inset-0 rounded-xl bg-[#17352b] shadow-[0_6px_16px_rgba(23,53,43,.2)] sm:rounded-[1.1rem]"
-                  transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.6 }}
-                />
-              )}
-
-              <span className="relative z-10 flex h-5 w-5 items-center justify-center sm:h-6 sm:w-6">
-                {React.cloneElement(item.icon as React.ReactElement<{ className?: string }>, {
-                  className: `w-4 h-4 sm:w-[17px] sm:h-[17px] transition-colors duration-200 ${
-                    isActive ? 'text-[#ff9a62]' : 'text-[#7d857d]'
-                  }`,
-                })}
-                {item.badge && (
-                  <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white animate-pulse" />
-                )}
-              </span>
-
-              <span
-                className={`relative z-10 max-w-full truncate px-0.5 text-[8px] leading-none tracking-tight sm:text-[9px] ${
-                  isActive ? 'font-bold text-white' : 'font-semibold text-[#737d74]'
-                }`}
-              >
-                {item.label}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </nav>
-  );
-
-  if (typeof document !== 'undefined') {
-    return createPortal(nav, document.body);
-  }
-
-  return nav;
 };

@@ -29,23 +29,23 @@ export function SimpleFormModal({
 }: SimpleFormModalProps) {
   const content = (
     <>
-      <div className="shrink-0 border-b border-[#17352b]/8 px-5 pb-4 pt-5 sm:px-6">
+      <div className="shrink-0 border-b border-[#17352b]/8 px-4 pb-3 pt-4 sm:px-5">
         <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
+          <div className="flex min-w-0 items-center gap-2.5">
             {icon && (
-              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#17352b] text-white">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#17352b] text-white">
                 {icon}
               </div>
             )}
             <div className="min-w-0">
               <h3
                 id={titleId}
-                className="truncate font-extrabold text-base leading-tight text-[#17352b]"
+                className="truncate font-extrabold text-sm leading-tight text-[#17352b]"
               >
                 {title}
               </h3>
               {subtitle && (
-                <p className="mt-0.5 text-[11px] font-medium text-[#68756d]">{subtitle}</p>
+                <p className="mt-0.5 text-[10px] font-medium text-[#68756d]">{subtitle}</p>
               )}
             </div>
           </div>
@@ -62,19 +62,19 @@ export function SimpleFormModal({
 
       {onSubmit ? (
         <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3 sm:px-5">
             {children}
           </div>
-          <div className="shrink-0 border-t border-[#17352b]/8 bg-[#fffdf8] px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
+          <div className="shrink-0 border-t border-[#17352b]/8 bg-[#fffdf8] px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5">
             {footer}
           </div>
         </form>
       ) : (
         <>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3 sm:px-5">
             {children}
           </div>
-          <div className="shrink-0 border-t border-[#17352b]/8 bg-[#fffdf8] px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
+          <div className="shrink-0 border-t border-[#17352b]/8 bg-[#fffdf8] px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5">
             {footer}
           </div>
         </>

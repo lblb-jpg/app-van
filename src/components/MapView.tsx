@@ -1,30 +1,53 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import { 
-  MapPin, 
-  Layers, 
-  Locate, 
-  Plus, 
+import {
+  MapPin,
+  Layers,
+  Locate,
+  Plus,
   Filter,
   Crosshair,
-  Navigation2
+  Navigation2,
+  ChevronUp,
+  ChevronDown,
+  Gauge,
+  Mountain,
 } from 'lucide-react';
-import { Poi, PoiType, Friend, GpsTrack, GpsPoint, TripPhoto, Waypoint } from '../types';
-import { StepFormModal } from './StepFormModal';
-
-const ADD_POI_STEPS = [
-  { id: 1, label: 'Essentiel', hint: 'Nom et type' },
-  { id: 2, label: 'Détails', hint: 'Lieu et confort' },
-] as const;
+import {
+  Poi,
+  PoiType,
+  Friend,
+  GpsPoint,
+  GpsTrack,
+  TripPhoto,
+  VanSleepSpot,
+  Waypoint,
+  JournalNote,
+} from '../types';
+import { FRANCE_MAP_CENTER, FRANCE_MAP_ZOOM, LOCAL_MAP_ZOOM } from '../lib/mapDefaults';
+import { getSleepSpotEmoji, hasValidCoords, sleepSpotBorderColor, toLeafletCoords } from '../lib/mapCoords';
+import { SimpleFormModal } from './SimpleFormModal';
+import {
+  CompactFormChip,
+  CompactFormField,
+  CompactFormHero,
+  CompactFormRoot,
+  CompactFormSection,
+  CompactFormTextInput,
+  FormModalFooter,
+} from './CompactFormLayout';
+import { MapInfoPanel, MapSelection } from './MapInfoPanel';
 
 interface MapViewProps {
   pois: Poi[];
   friends: Friend[];
   currentFriendId: string;
-  activeTrackPoints: GpsPoint[];
-  pastTracks: GpsTrack[];
   photos: TripPhoto[];
   waypoints: Waypoint[];
+  journal?: JournalNote[];
+  sleepSpots?: VanSleepSpot[];
+  pastTracks?: GpsTrack[];
+  activeTrackPoints?: GpsPoint[];
   userLocation: GpsPoint | null;
   focusLocation: {
     lat: number;
@@ -42,137 +65,147 @@ const TILE_LAYERS = {
   outdoor: {
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; OpenStreetMap contributors',
-    name: 'Standard OpenStreetMap'
+    name: 'Standard OpenStreetMap',
   },
   topo: {
     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
     attribution: 'Map data &copy; OpenStreetMap, SRTM | Map style &copy; OpenTopoMap',
-    name: 'Relief Topographique (Rando)'
+    name: 'Relief Topographique (Rando)',
   },
   satellite: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri',
-    name: 'Satellite HD'
-  }
+    name: 'Satellite HD',
+  },
 };
 
-const escapeHtml = (value: string) =>
-  value.replace(/[&<>'"]/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    "'": '&#39;',
-    '"': '&quot;'
-  })[character] || character);
+function getPoiIconConfig(type: PoiType) {
+  switch (type) {
+    case 'van_spot':
+      return { emoji: '🚐', bg: '#059669', label: 'Spot Van' };
+    case 'water':
+      return { emoji: '🚰', bg: '#0284c7', label: "Point d'eau" };
+    case 'viewpoint':
+      return { emoji: '📸', bg: '#d97706', label: 'Panorama' };
+    case 'camping':
+      return { emoji: '⛺', bg: '#7c3aed', label: 'Camping' };
+    case 'fuel':
+      return { emoji: '⛽', bg: '#dc2626', label: 'Station' };
+    default:
+      return { emoji: '📍', bg: '#475569', label: "Point d'intérêt" };
+  }
+}
 
-const withoutSource = (notes?: string) =>
-  notes
-    ?.replace(/\s*·?\s*Source OpenStreetMap\s*:\s*https?:\/\/\S+/gi, '')
-    .trim() || '';
+function waypointMarkerStyle(status: Waypoint['status']) {
+  if (status === 'done') return { bg: '#64748b', border: '#94a3b8' };
+  if (status === 'active') return { bg: '#eb6c32', border: '#fbbf24' };
+  return { bg: '#17352b', border: '#fbbf24' };
+}
 
 export const MapView: React.FC<MapViewProps> = ({
   pois,
   friends,
   currentFriendId,
-  activeTrackPoints,
-  pastTracks,
+  activeTrackPoints = [],
+  pastTracks = [],
   photos,
   waypoints,
+  journal = [],
+  sleepSpots = [],
   userLocation,
   focusLocation,
   mapVisible = true,
   onAddPoi,
-  onAddPhoto
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
-  const activePolylineRef = useRef<L.Polyline | null>(null);
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const hasFlownToUserRef = useRef(false);
+  const onSelectRef = useRef<(sel: MapSelection | null) => void>(() => {});
 
-  const [activeTile, setActiveTile] = useState<'outdoor' | 'topo' | 'satellite'>('outdoor');
+  const [activeTile, setActiveTile] = useState<'outdoor' | 'topo' | 'satellite'>('satellite');
   const [selectedPoiTypeFilter, setSelectedPoiTypeFilter] = useState<string>('all');
   const [selectedFriendFilter, setSelectedFriendFilter] = useState<string>('all');
   const [clickCoords, setClickCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [isPickingLocation, setIsPickingLocation] = useState(false);
+  const [selectedFeature, setSelectedFeature] = useState<MapSelection | null>(null);
+  const [toolbarExpanded, setToolbarExpanded] = useState(false);
   const pickingLocationRef = useRef(false);
 
-  // New POI state
   const [newPoiTitle, setNewPoiTitle] = useState('');
   const [newPoiDesc, setNewPoiDesc] = useState('');
   const [newPoiType, setNewPoiType] = useState<PoiType>('van_spot');
   const [newPoiAmenities, setNewPoiAmenities] = useState<string[]>(['eau', 'gratuit']);
   const [formError, setFormError] = useState('');
-  const [addPoiStep, setAddPoiStep] = useState(1);
 
   useEffect(() => {
     pickingLocationRef.current = isPickingLocation;
   }, [isPickingLocation]);
+
+  useEffect(() => {
+    onSelectRef.current = setSelectedFeature;
+  }, []);
 
   // Initialize Leaflet map
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
     if (!mapRef.current) {
-      const initialLat = userLocation?.lat || 45.8992;
-      const initialLng = userLocation?.lng || 6.1294;
+      const initialLat = userLocation?.lat ?? FRANCE_MAP_CENTER.lat;
+      const initialLng = userLocation?.lng ?? FRANCE_MAP_CENTER.lng;
+      const initialZoom = userLocation ? LOCAL_MAP_ZOOM : FRANCE_MAP_ZOOM;
 
-      const map = L.map(mapContainerRef.current, {
-        zoomControl: false
-      }).setView([initialLat, initialLng], 11);
+      const map = L.map(mapContainerRef.current, { zoomControl: false }).setView(
+        [initialLat, initialLng],
+        initialZoom
+      );
 
       L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
       const tileLayer = L.tileLayer(TILE_LAYERS[activeTile].url, {
         attribution: TILE_LAYERS[activeTile].attribution,
-        maxZoom: 19
+        maxZoom: 19,
       }).addTo(map);
 
       tileLayerRef.current = tileLayer;
-
-      const layerGroup = L.layerGroup().addTo(map);
-      layerGroupRef.current = layerGroup;
+      layerGroupRef.current = L.layerGroup().addTo(map);
 
       map.on('click', (e: L.LeafletMouseEvent) => {
-        if (!pickingLocationRef.current) return;
-        setClickCoords({ lat: e.latlng.lat, lng: e.latlng.lng });
-        setIsPickingLocation(false);
-        setShowAddModal(true);
+        if (pickingLocationRef.current) {
+          setClickCoords({ lat: e.latlng.lat, lng: e.latlng.lng });
+          setIsPickingLocation(false);
+          setShowAddModal(true);
+          return;
+        }
+        onSelectRef.current(null);
       });
 
       mapRef.current = map;
     }
 
     return () => {
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
+      mapRef.current?.remove();
+      mapRef.current = null;
     };
   }, []);
 
-  // Update Tile Layer
   useEffect(() => {
     if (!mapRef.current) return;
-    if (tileLayerRef.current) {
-      mapRef.current.removeLayer(tileLayerRef.current);
-    }
+    if (tileLayerRef.current) mapRef.current.removeLayer(tileLayerRef.current);
     const newTileLayer = L.tileLayer(TILE_LAYERS[activeTile].url, {
       attribution: TILE_LAYERS[activeTile].attribution,
-      maxZoom: 19
+      maxZoom: 19,
     }).addTo(mapRef.current);
     tileLayerRef.current = newTileLayer;
   }, [activeTile]);
 
-  // Fly to an exact spot selected from sleep search or the itinerary.
   useEffect(() => {
     if (!mapRef.current || !focusLocation || !mapVisible) return;
-
+    hasFlownToUserRef.current = true;
     const map = mapRef.current;
     const { lat, lng } = focusLocation;
-    hasFlownToUserRef.current = true;
 
     const centerOnSpot = () => {
       map.invalidateSize({ animate: false });
@@ -181,11 +214,9 @@ export const MapView: React.FC<MapViewProps> = ({
 
     centerOnSpot();
     const retryTimer = window.setTimeout(centerOnSpot, 180);
-
     return () => window.clearTimeout(retryTimer);
   }, [mapVisible, focusLocation?.requestId, focusLocation?.lat, focusLocation?.lng]);
 
-  // Center the map once when GPS becomes available (unless a spot is already focused).
   useEffect(() => {
     if (!mapRef.current || !userLocation || hasFlownToUserRef.current || focusLocation || !mapVisible) return;
     hasFlownToUserRef.current = true;
@@ -193,14 +224,51 @@ export const MapView: React.FC<MapViewProps> = ({
     mapRef.current.flyTo([userLocation.lat, userLocation.lng], 14, { duration: 1.1 });
   }, [userLocation, focusLocation, mapVisible]);
 
-  // Update Markers, Polylines and Layers
+  // Auto-select focused spot
+  useEffect(() => {
+    if (!focusLocation) return;
+    const matchSpot = sleepSpots.find(
+      (s) =>
+        Math.abs(s.lat - focusLocation.lat) < 0.00001 &&
+        Math.abs(s.lng - focusLocation.lng) < 0.00001
+    );
+    if (matchSpot) {
+      setSelectedFeature({ type: 'sleepSpot', id: matchSpot.id });
+      return;
+    }
+    const matchWp = waypoints.find(
+      (w) =>
+        hasValidCoords(w.lat, w.lng) &&
+        Math.abs(w.lat - focusLocation.lat) < 0.00001 &&
+        Math.abs(w.lng - focusLocation.lng) < 0.00001
+    );
+    if (matchWp) {
+      setSelectedFeature({ type: 'waypoint', id: matchWp.id });
+    }
+  }, [focusLocation?.requestId, sleepSpots, waypoints]);
+
+  // Update markers & layers
   useEffect(() => {
     if (!mapRef.current || !layerGroupRef.current) return;
-
     const layerGroup = layerGroupRef.current;
     layerGroup.clearLayers();
 
-    // 1. Draw Past Tracks
+    // Waypoint route polyline
+    const sortedWps = [...waypoints]
+      .filter((wp) => hasValidCoords(wp.lat, wp.lng))
+      .sort((a, b) => a.order - b.order);
+    if (sortedWps.length > 1) {
+      const routeCoords: [number, number][] = sortedWps.map((wp) => [wp.lat, wp.lng]);
+      L.polyline(routeCoords, {
+        color: '#eb6c32',
+        weight: 3,
+        opacity: 0.55,
+        dashArray: '8, 12',
+        lineCap: 'round',
+      }).addTo(layerGroup);
+    }
+
+    // Past tracks
     pastTracks.forEach((track) => {
       if (track.points && track.points.length > 1) {
         const coords: [number, number][] = track.points.map((p) => [p.lat, p.lng]);
@@ -208,26 +276,26 @@ export const MapView: React.FC<MapViewProps> = ({
           color: '#64748b',
           weight: 4,
           opacity: 0.6,
-          dashArray: '6, 8'
+          dashArray: '6, 8',
         })
-          .bindTooltip(`Trace GPX : ${track.title} (${track.distanceKm} km)`, { sticky: true })
+          .on('click', () => onSelectRef.current({ type: 'track', id: track.id }))
           .addTo(layerGroup);
       }
     });
 
-    // 2. Draw Active GPS Track Recording Polyline
+    // Active GPS track
     if (activeTrackPoints.length > 1) {
       const coords: [number, number][] = activeTrackPoints.map((p) => [p.lat, p.lng]);
       L.polyline(coords, {
-        color: '#059669', // Emerald
+        color: '#059669',
         weight: 6,
         opacity: 0.9,
         lineCap: 'round',
-        lineJoin: 'round'
+        lineJoin: 'round',
       }).addTo(layerGroup);
     }
 
-    // 3. Draw User Current GPS Location marker
+    // User GPS marker
     if (userLocation) {
       const liveIcon = L.divIcon({
         className: 'custom-live-marker',
@@ -236,15 +304,18 @@ export const MapView: React.FC<MapViewProps> = ({
           <span class="relative inline-flex rounded-full h-5 w-5 bg-emerald-600 border-2 border-white shadow-md"></span>
         </div>`,
         iconSize: [32, 32],
-        iconAnchor: [16, 16]
+        iconAnchor: [16, 16],
       });
 
       L.marker([userLocation.lat, userLocation.lng], { icon: liveIcon })
-        .bindTooltip('Votre Van / GPS Position', { permanent: false })
+        .on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          onSelectRef.current({ type: 'user' });
+        })
         .addTo(layerGroup);
     }
 
-    // 4. Draw Friends as live profile markers
+    // Friends
     friends.forEach((friend) => {
       if (
         (selectedFriendFilter === 'all' || selectedFriendFilter === friend.id) &&
@@ -252,183 +323,187 @@ export const MapView: React.FC<MapViewProps> = ({
         friend.liveLng != null
       ) {
         const isCurrentUser = friend.id === currentFriendId;
-        const safeName = escapeHtml(friend.name);
-        const safeRole = escapeHtml(friend.role || 'Membre de l’équipage');
-        const safeAvatar = escapeHtml(friend.avatar);
         const safeColor = /^#[0-9a-fA-F]{3,8}$/.test(friend.color) ? friend.color : '#059669';
-        const battery = Math.max(0, Math.min(100, friend.battery ?? 85));
-        const activity = escapeHtml(friend.lastActive || 'En direct');
 
         const avatarIcon = L.divIcon({
           className: 'map-profile-marker',
           html: `<div class="profile-marker ${isCurrentUser ? 'profile-marker--current' : ''}" style="--profile-color: ${safeColor}">
             <div class="profile-marker__pulse"></div>
             <div class="profile-marker__avatar-wrap">
-              <img src="${safeAvatar}" alt="${safeName}" class="profile-marker__avatar" />
+              <img src="${friend.avatar}" alt="" class="profile-marker__avatar" />
               <span class="profile-marker__presence"></span>
             </div>
-            <div class="profile-marker__label">
-              <strong>${isCurrentUser ? 'Vous' : safeName}</strong>
-              <span>${isCurrentUser ? 'Position GPS' : activity}</span>
-            </div>
           </div>`,
-          iconSize: [180, 58],
-          iconAnchor: [29, 29]
+          iconSize: [54, 54],
+          iconAnchor: [27, 27],
         });
 
         L.marker([friend.liveLat, friend.liveLng], { icon: avatarIcon })
-          .bindPopup(`
-            <div class="profile-popup">
-              <div class="profile-popup__hero" style="--profile-color: ${safeColor}">
-                <img src="${safeAvatar}" alt="${safeName}" class="profile-popup__avatar" />
-                <div>
-                  <div class="profile-popup__eyebrow">${isCurrentUser ? 'MON VAN' : 'ÉQUIPIER EN DIRECT'}</div>
-                  <h3>${safeName}</h3>
-                  <p>${safeRole}</p>
-                </div>
-              </div>
-              <div class="profile-popup__stats">
-                <span><b>${battery}%</b> batterie</span>
-                <span class="profile-popup__live"><i></i>${activity}</span>
-              </div>
-            </div>
-          `, { className: 'map-profile-popup', closeButton: false, offset: [0, -24] })
+          .on('click', (e) => {
+            L.DomEvent.stopPropagation(e);
+            onSelectRef.current({ type: 'friend', id: friend.id });
+          })
           .addTo(layerGroup);
       }
     });
 
-    // 5. Draw Waypoints (Stages)
-    waypoints.forEach((wp) => {
-      const visibleNotes = withoutSource(wp.notes);
-      const wpIcon = L.divIcon({
-        className: 'wp-marker',
-        html: `<div class="flex items-center justify-center w-7 h-7 rounded-full bg-slate-900 text-white font-black text-xs border-2 border-amber-400 shadow-md">
-          ${wp.order}
-        </div>`,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14]
+    // Sleep spots
+    sleepSpots.forEach((spot) => {
+      if (!hasValidCoords(spot.lat, spot.lng)) return;
+      const isFocused =
+        focusLocation &&
+        Math.abs(focusLocation.lat - spot.lat) < 0.00001 &&
+        Math.abs(focusLocation.lng - spot.lng) < 0.00001;
+      const borderColor = sleepSpotBorderColor(spot.confidence);
+      const emoji = getSleepSpotEmoji(spot);
+
+      const spotIcon = L.divIcon({
+        className: 'sleep-spot-marker',
+        html: `<div style="display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:10px;background:#fff;border:2px solid ${borderColor};box-shadow:0 4px 14px rgba(23,53,43,.18);font-size:15px;line-height:1;${isFocused ? 'transform:scale(1.15);' : ''}">${emoji}</div>`,
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
       });
 
-      L.marker([wp.lat, wp.lng], { icon: wpIcon })
-        .bindPopup(`
-          <div class="p-1 font-sans">
-            <span class="text-[10px] uppercase font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">Étape ${wp.order}</span>
-            <h4 class="font-bold text-sm text-slate-900 mt-1">${escapeHtml(wp.title)}</h4>
-            <p class="text-xs text-slate-600 mt-0.5">${escapeHtml(wp.locationName)}</p>
-            ${visibleNotes ? `<p class="text-xs italic text-slate-500 mt-1 border-t pt-1 border-slate-100">${escapeHtml(visibleNotes)}</p>` : ''}
-          </div>
-        `)
+      L.marker(toLeafletCoords(spot.lat, spot.lng), {
+        icon: spotIcon,
+        zIndexOffset: isFocused ? 900 : 0,
+      })
+        .on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          onSelectRef.current({ type: 'sleepSpot', id: spot.id });
+        })
         .addTo(layerGroup);
     });
 
-    // 6. Draw POIs
+    // Waypoints
+    waypoints.forEach((wp) => {
+      if (!hasValidCoords(wp.lat, wp.lng)) return;
+      const style = waypointMarkerStyle(wp.status);
+
+      const wpIcon = L.divIcon({
+        className: 'wp-marker',
+        html: `<div style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;background:${style.bg};color:white;font-weight:900;font-size:11px;border:2px solid ${style.border};box-shadow:0 4px 12px rgba(23,53,43,.2);">${wp.order}</div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+      });
+
+      L.marker([wp.lat, wp.lng], { icon: wpIcon })
+        .on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          onSelectRef.current({ type: 'waypoint', id: wp.id });
+        })
+        .addTo(layerGroup);
+    });
+
+    // POIs
     pois.forEach((poi) => {
       if (selectedPoiTypeFilter !== 'all' && poi.type !== selectedPoiTypeFilter) return;
       if (selectedFriendFilter !== 'all' && poi.createdByFriendId !== selectedFriendFilter) return;
 
-      const creator = friends.find((f) => f.id === poi.createdByFriendId);
       const iconDetails = getPoiIconConfig(poi.type);
-
       const poiIcon = L.divIcon({
         className: 'poi-custom-marker',
-        html: `<div class="flex items-center justify-center rounded-2xl p-1.5 shadow-md border-2 border-white text-white font-bold transition-transform hover:scale-110 cursor-pointer" style="background-color: ${iconDetails.bg}; width: 34px; height: 34px;">
-          <span style="font-size: 16px;">${iconDetails.emoji}</span>
-        </div>`,
+        html: `<div style="display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:1rem;background:${iconDetails.bg};border:2px solid white;box-shadow:0 4px 12px rgba(23,53,43,.18);font-size:16px;">${iconDetails.emoji}</div>`,
         iconSize: [34, 34],
-        iconAnchor: [17, 17]
+        iconAnchor: [17, 17],
       });
 
-      const popupHtml = `
-        <div class="p-1 font-sans max-w-[220px]">
-          <div class="flex items-center gap-1.5 mb-1">
-            <span class="text-xs font-bold px-2 py-0.5 rounded-full text-white" style="background-color: ${iconDetails.bg}">${iconDetails.label}</span>
-          </div>
-          <h4 class="font-extrabold text-sm text-slate-900">${poi.title}</h4>
-          ${poi.description ? `<p class="text-xs text-slate-600 mt-1">${poi.description}</p>` : ''}
-          ${
-            poi.photoUrl
-              ? `<img src="${poi.photoUrl}" class="w-full h-24 object-cover rounded-xl mt-2 border border-slate-200" />`
-              : ''
-          }
-          <div class="flex items-center gap-1 mt-2 pt-1 border-t border-slate-100 text-[11px] text-slate-500">
-            <span>Ajouté par</span>
-            <strong style="color: ${creator?.color || '#059669'}">${creator?.name || 'Copain'}</strong>
-          </div>
-        </div>
-      `;
-
       L.marker([poi.lat, poi.lng], { icon: poiIcon })
-        .bindPopup(popupHtml)
+        .on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          onSelectRef.current({ type: 'poi', id: poi.id });
+        })
         .addTo(layerGroup);
     });
 
-    // 7. Draw Photo pins
+    // Photos
     photos.forEach((photo) => {
-      if (photo.lat && photo.lng) {
-        if (selectedFriendFilter !== 'all' && photo.friendId !== selectedFriendFilter) return;
+      if (!photo.lat || !photo.lng) return;
+      if (selectedFriendFilter !== 'all' && photo.friendId !== selectedFriendFilter) return;
 
-        const photoIcon = L.divIcon({
-          className: 'photo-marker',
-          html: `<div class="w-8 h-8 rounded-lg border-2 border-white shadow-md overflow-hidden bg-slate-900">
-            <img src="${photo.url}" class="w-full h-full object-cover" />
-          </div>`,
-          iconSize: [32, 32],
-          iconAnchor: [16, 16]
-        });
-
-        L.marker([photo.lat, photo.lng], { icon: photoIcon })
-          .bindPopup(`
-            <div class="p-1 font-sans max-w-[200px]">
-              <img src="${photo.url}" class="w-full h-28 object-cover rounded-xl mb-1 border border-slate-200" />
-              <p class="text-xs font-medium text-slate-800">${photo.caption || 'Photo souvenir Vanlife'}</p>
-            </div>
-          `)
-          .addTo(layerGroup);
-      }
-    });
-
-    // 8. Highlight the exact sleeping spot selected from search results.
-    if (focusLocation?.emoji) {
-      const focusIcon = L.divIcon({
-        className: 'sleep-spot-focus-marker',
-        html: `<div style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:12px;background:#fff;border:2px solid #eb6c32;box-shadow:0 6px 18px rgba(23,53,43,.22);font-size:17px;line-height:1;">${escapeHtml(focusLocation.emoji)}</div>`,
+      const photoIcon = L.divIcon({
+        className: 'photo-marker',
+        html: `<div style="width:32px;height:32px;border-radius:8px;border:2px solid white;box-shadow:0 4px 12px rgba(23,53,43,.18);overflow:hidden;background:#17352b;"><img src="${photo.url}" style="width:100%;height:100%;object-fit:cover;" /></div>`,
         iconSize: [32, 32],
-        iconAnchor: [16, 28],
+        iconAnchor: [16, 16],
       });
 
-      const marker = L.marker([focusLocation.lat, focusLocation.lng], {
+      L.marker([photo.lat, photo.lng], { icon: photoIcon })
+        .on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          onSelectRef.current({ type: 'photo', id: photo.id });
+        })
+        .addTo(layerGroup);
+    });
+
+    // Journal notes with coords
+    journal.forEach((note) => {
+      if (!note.lat || !note.lng) return;
+      if (selectedFriendFilter !== 'all' && note.friendId !== selectedFriendFilter) return;
+
+      const noteIcon = L.divIcon({
+        className: 'journal-marker',
+        html: `<div style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:#7c3aed;border:2px solid white;box-shadow:0 4px 12px rgba(23,53,43,.18);font-size:14px;">📝</div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+      });
+
+      L.marker([note.lat, note.lng], { icon: noteIcon })
+        .on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          onSelectRef.current({ type: 'journal', id: note.id });
+        })
+        .addTo(layerGroup);
+    });
+
+    // Focus highlight
+    if (focusLocation && hasValidCoords(focusLocation.lat, focusLocation.lng)) {
+      const focusEmoji = focusLocation.emoji || '📍';
+      const focusIcon = L.divIcon({
+        className: 'sleep-spot-focus-marker',
+        html: `<div style="display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:12px;background:#fff;border:3px solid #eb6c32;box-shadow:0 6px 20px rgba(235,108,50,.35);font-size:18px;line-height:1;animation:map-focus-pulse 1.5s ease-in-out infinite;">${focusEmoji}</div>`,
+        iconSize: [36, 36],
+        iconAnchor: [18, 18],
+      });
+
+      L.marker([focusLocation.lat, focusLocation.lng], {
         icon: focusIcon,
         zIndexOffset: 1000,
       }).addTo(layerGroup);
-
-      if (focusLocation.label) {
-        marker.bindTooltip(escapeHtml(focusLocation.label), {
-          direction: 'top',
-          offset: [0, -24],
-          permanent: true,
-          opacity: 0.96,
-        });
-      }
-
-      marker.openTooltip();
     }
+  }, [
+    pois,
+    friends,
+    pastTracks,
+    activeTrackPoints,
+    userLocation,
+    photos,
+    waypoints,
+    journal,
+    sleepSpots,
+    focusLocation,
+    selectedPoiTypeFilter,
+    selectedFriendFilter,
+    currentFriendId,
+  ]);
 
-  }, [pois, friends, pastTracks, activeTrackPoints, userLocation, photos, waypoints, focusLocation, selectedPoiTypeFilter, selectedFriendFilter]);
-
-  const handleRecenter = () => {
+  const handleRecenter = useCallback(() => {
     if (!mapRef.current) return;
     if (userLocation) {
       mapRef.current.flyTo([userLocation.lat, userLocation.lng], 14, { duration: 1.2 });
-    } else if (waypoints.length > 0) {
-      mapRef.current.flyTo([waypoints[0].lat, waypoints[0].lng], 12);
+    } else {
+      const firstWaypoint = waypoints.find((wp) => hasValidCoords(wp.lat, wp.lng));
+      if (firstWaypoint) {
+        mapRef.current.flyTo(toLeafletCoords(firstWaypoint.lat, firstWaypoint.lng), 12);
+      }
     }
-  };
+  }, [userLocation, waypoints]);
 
   const getDefaultCoords = () => {
     if (userLocation) return { lat: userLocation.lat, lng: userLocation.lng };
     const center = mapRef.current?.getCenter();
     if (center) return { lat: center.lat, lng: center.lng };
-    return { lat: 45.8992, lng: 6.1294 };
+    return { lat: FRANCE_MAP_CENTER.lat, lng: FRANCE_MAP_CENTER.lng };
   };
 
   const resetPoiForm = () => {
@@ -437,27 +512,6 @@ export const MapView: React.FC<MapViewProps> = ({
     setNewPoiType('van_spot');
     setNewPoiAmenities(['eau', 'gratuit']);
     setFormError('');
-    setAddPoiStep(1);
-  };
-
-  const canAdvancePoiStep = (step: number) => {
-    if (step === 1) return Boolean(newPoiTitle.trim());
-    if (step === 2) return Boolean(clickCoords);
-    return true;
-  };
-
-  const goToNextPoiStep = () => {
-    if (!canAdvancePoiStep(addPoiStep)) {
-      if (addPoiStep === 1) setFormError('Donne un nom au spot.');
-      return;
-    }
-    setFormError('');
-    setAddPoiStep((current) => Math.min(ADD_POI_STEPS.length, current + 1));
-  };
-
-  const goToPreviousPoiStep = () => {
-    setFormError('');
-    setAddPoiStep((current) => Math.max(1, current - 1));
   };
 
   const openAddPoiForm = () => {
@@ -524,11 +578,9 @@ export const MapView: React.FC<MapViewProps> = ({
   };
 
   const toggleAmenity = (item: string) => {
-    if (newPoiAmenities.includes(item)) {
-      setNewPoiAmenities(newPoiAmenities.filter((a) => a !== item));
-    } else {
-      setNewPoiAmenities([...newPoiAmenities, item]);
-    }
+    setNewPoiAmenities((prev) =>
+      prev.includes(item) ? prev.filter((a) => a !== item) : [...prev, item]
+    );
   };
 
   const poiTypes = [
@@ -541,277 +593,271 @@ export const MapView: React.FC<MapViewProps> = ({
   ];
 
   const liveCrewCount = friends.filter((f) => f.liveLat != null && f.liveLng != null).length;
+  const layerCount =
+    pois.length +
+    waypoints.filter((w) => hasValidCoords(w.lat, w.lng)).length +
+    sleepSpots.length +
+    photos.filter((p) => p.lat && p.lng).length +
+    journal.filter((n) => n.lat && n.lng).length;
 
   return (
-    <div className="relative mt-1 h-full w-full min-h-[420px] overflow-hidden bg-[#dfe6dc] sm:mt-2 sm:mx-auto sm:min-h-[560px] sm:w-[calc(100%-2rem)] sm:max-w-6xl sm:rounded-[2rem] sm:border sm:border-[#17352b]/10 sm:shadow-[0_24px_60px_rgba(23,53,43,.14)]">
-      {/* Leaflet Container */}
-      <div ref={mapContainerRef} className="w-full h-full z-0" />
+    <div className="map-view">
+      <div ref={mapContainerRef} className="map-view__canvas" />
 
-      {/* Top Filter Overlay Pill */}
-      <div className="absolute top-3 left-3 right-3 z-10 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
-        <div className="flex max-w-full min-w-0 flex-1 items-center gap-1.5 bg-[#fffdf8]/92 backdrop-blur-xl px-3.5 py-2 rounded-[1rem] border border-[#17352b]/10 shadow-[0_8px_24px_rgba(23,53,43,.12)] pointer-events-auto sm:flex-none">
-          <Filter className="w-3.5 h-3.5 text-[#eb6c32] shrink-0" />
-          <select
-            value={selectedPoiTypeFilter}
-            onChange={(e) => setSelectedPoiTypeFilter(e.target.value)}
-            className="min-w-0 max-w-[10.5rem] bg-transparent text-xs font-extrabold text-[#17352b] focus:outline-hidden cursor-pointer sm:max-w-none"
-          >
-            <option value="all">Tous les spots</option>
-            <option value="van_spot">🚐 Spots Van dodo</option>
-            <option value="water">🚰 Points d'eau</option>
-            <option value="viewpoint">📸 Panoramas & Vues</option>
-            <option value="camping">⛺ Campings</option>
-            <option value="fuel">⛽ Carburant / Gaz</option>
-          </select>
-        </div>
+      {/* Compact floating toolbar */}
+      <div className={`map-toolbar ${toolbarExpanded ? 'map-toolbar--expanded' : ''}`}>
+        <button
+          type="button"
+          onClick={() => setToolbarExpanded((v) => !v)}
+          className="map-toolbar__toggle"
+          aria-expanded={toolbarExpanded}
+        >
+          <Filter className="h-3.5 w-3.5 text-[#eb6c32]" />
+          <span>{layerCount} repères</span>
+          {toolbarExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </button>
 
-        {/* Layer Tile Selector Dropdown */}
-        <div className="flex items-center gap-1 bg-[#fffdf8]/92 backdrop-blur-xl px-2 py-1.5 rounded-[1rem] border border-[#17352b]/10 shadow-[0_8px_24px_rgba(23,53,43,.12)] pointer-events-auto">
-          <Layers className="w-3.5 h-3.5 text-[#eb6c32] ml-1" />
-          {(['outdoor', 'topo', 'satellite'] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setActiveTile(mode)}
-              className={`min-h-9 px-2.5 py-1.5 rounded-full text-[10px] font-bold transition-colors ${
-                activeTile === mode
-                  ? 'bg-[#17352b] text-white shadow-xs'
-                  : 'text-[#68756d] hover:bg-[#eee9de]'
-              }`}
-            >
-              {mode === 'outdoor' ? 'Plan' : mode === 'topo' ? 'Topo' : 'Sat'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Live crew selector */}
-      {friends.length > 0 && (
-        <div className="absolute top-16 left-3 right-3 z-10 pointer-events-none">
-          <div className="map-crew-bar pointer-events-auto">
-            <button
-              type="button"
-              onClick={() => setSelectedFriendFilter('all')}
-              className={`map-crew-filter ${selectedFriendFilter === 'all' ? 'map-crew-filter--active' : ''}`}
-              title="Afficher tout l'équipage"
-            >
-              <span className="map-crew-filter__all">{friends.length}</span>
-              <span className="map-crew-filter__meta">
-                <b>Équipage</b>
-                <small>
-                  <i className={liveCrewCount > 0 ? 'is-live' : 'is-off'} />
-                  {liveCrewCount > 0 ? `${liveCrewCount} en ligne` : 'Hors ligne'}
-                </small>
-              </span>
-            </button>
-            {friends.map((friend) => {
-              const isSelected = selectedFriendFilter === friend.id;
-              const isCurrentUser = friend.id === currentFriendId;
-              const isLive = friend.liveLat != null && friend.liveLng != null;
-              return (
+        {toolbarExpanded && (
+          <div className="map-toolbar__body">
+            <div className="map-toolbar__row">
+              <Layers className="h-3.5 w-3.5 text-[#eb6c32] shrink-0" />
+              {(['outdoor', 'topo', 'satellite'] as const).map((mode) => (
                 <button
-                  key={friend.id}
+                  key={mode}
                   type="button"
-                  onClick={() => setSelectedFriendFilter(isSelected ? 'all' : friend.id)}
-                  className={`map-crew-filter ${isSelected ? 'map-crew-filter--active' : ''}`}
-                  title={`Afficher les repères de ${friend.name}`}
+                  onClick={() => setActiveTile(mode)}
+                  className={`map-toolbar__chip ${activeTile === mode ? 'map-toolbar__chip--active' : ''}`}
                 >
-                  <span
-                    className={`map-crew-filter__avatar ${isLive ? 'is-live' : 'is-off'}`}
-                    style={{ borderColor: friend.color }}
-                  >
-                    <img src={friend.avatar} alt="" />
-                    {isLive && <i />}
-                  </span>
+                  {mode === 'outdoor' ? 'Plan' : mode === 'topo' ? 'Topo' : 'Satellite'}
+                </button>
+              ))}
+            </div>
+
+            <div className="map-toolbar__row">
+              <select
+                value={selectedPoiTypeFilter}
+                onChange={(e) => setSelectedPoiTypeFilter(e.target.value)}
+                className="map-toolbar__select"
+              >
+                <option value="all">Tous les spots</option>
+                <option value="van_spot">🚐 Spots Van</option>
+                <option value="water">🚰 Eau</option>
+                <option value="viewpoint">📸 Panoramas</option>
+                <option value="camping">⛺ Campings</option>
+                <option value="fuel">⛽ Carburant</option>
+              </select>
+            </div>
+
+            {friends.length > 0 && (
+              <div className="map-crew-bar map-crew-bar--compact">
+                <button
+                  type="button"
+                  onClick={() => setSelectedFriendFilter('all')}
+                  className={`map-crew-filter ${selectedFriendFilter === 'all' ? 'map-crew-filter--active' : ''}`}
+                >
+                  <span className="map-crew-filter__all">{friends.length}</span>
                   <span className="map-crew-filter__meta">
-                    <b>{isCurrentUser ? 'Vous' : friend.name}</b>
+                    <b>Tous</b>
                     <small>
-                      <i className={isLive ? 'is-live' : 'is-off'} />
-                      {isLive ? friend.lastActive || 'En direct' : 'Hors ligne'}
+                      <i className={liveCrewCount > 0 ? 'is-live' : 'is-off'} />
+                      {liveCrewCount > 0 ? `${liveCrewCount} en ligne` : 'Hors ligne'}
                     </small>
                   </span>
                 </button>
-              );
-            })}
+                {friends.map((friend) => {
+                  const isSelected = selectedFriendFilter === friend.id;
+                  const isLive = friend.liveLat != null && friend.liveLng != null;
+                  return (
+                    <button
+                      key={friend.id}
+                      type="button"
+                      onClick={() => setSelectedFriendFilter(isSelected ? 'all' : friend.id)}
+                      className={`map-crew-filter ${isSelected ? 'map-crew-filter--active' : ''}`}
+                    >
+                      <span
+                        className={`map-crew-filter__avatar ${isLive ? 'is-live' : 'is-off'}`}
+                        style={{ borderColor: friend.color }}
+                      >
+                        <img src={friend.avatar} alt="" />
+                        {isLive && <i />}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        </div>
+        )}
+      </div>
+
+      {/* GPS HUD when nothing selected */}
+      {!selectedFeature && userLocation && (
+        <button
+          type="button"
+          onClick={() => setSelectedFeature({ type: 'user' })}
+          className="map-gps-hud"
+        >
+          <span className="map-gps-hud__dot" />
+          <span className="map-gps-hud__label">GPS actif</span>
+          {userLocation.altitude != null && (
+            <span className="map-gps-hud__stat"><Mountain className="h-3 w-3" /> {userLocation.altitude}m</span>
+          )}
+          {userLocation.speed != null && (
+            <span className="map-gps-hud__stat"><Gauge className="h-3 w-3" /> {Math.round(userLocation.speed)} km/h</span>
+          )}
+        </button>
       )}
 
-      {/* Floating actions: add POI + recenter */}
-      <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-2">
-        <button
-          type="button"
-          onClick={openAddPoiForm}
-          className="p-3.5 bg-[#17352b] text-white rounded-[1.1rem] shadow-[0_10px_25px_rgba(23,53,43,.28)] border border-white/20 hover:bg-[#285849] active:scale-95 transition-all"
-          title="Ajouter un point sur la carte"
-          aria-label="Ajouter un point sur la carte"
-        >
-          <Plus className="w-5 h-5 text-white" />
+      {/* FABs */}
+      <div className={`map-fabs ${selectedFeature ? 'map-fabs--raised' : ''}`}>
+        <button type="button" onClick={openAddPoiForm} className="map-fab map-fab--primary" aria-label="Ajouter un point">
+          <Plus className="h-5 w-5" />
         </button>
-        <button
-          type="button"
-          onClick={handleRecenter}
-          className="p-3.5 bg-[#eb6c32] text-white rounded-[1.1rem] shadow-[0_10px_25px_rgba(235,108,50,.34)] border border-white/30 hover:bg-[#d95d29] active:scale-95 transition-all"
-          title="Centrer sur mon Van / Ma Position"
-        >
-          <Locate className="w-5 h-5 text-white" />
+        <button type="button" onClick={handleRecenter} className="map-fab map-fab--accent" aria-label="Centrer sur ma position">
+          <Locate className="h-5 w-5" />
         </button>
       </div>
 
       {/* Pick location banner */}
       {isPickingLocation && (
-        <div className="absolute inset-x-3 bottom-4 z-20 pointer-events-none">
-          <div className="mx-auto max-w-sm rounded-2xl bg-[#17352b] text-white px-4 py-3 shadow-xl pointer-events-auto flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <span className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
-                <Crosshair className="w-4 h-4 text-emerald-300" />
-              </span>
-              <div className="min-w-0">
-                <p className="text-xs font-extrabold truncate">Touche la carte pour placer</p>
-                <p className="text-[10px] text-white/65 font-medium">Le point sera ajouté à cet endroit</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setIsPickingLocation(false);
-                setShowAddModal(true);
-              }}
-              className="shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15"
-            >
-              Retour
-            </button>
+        <div className="map-pick-banner">
+          <Crosshair className="h-4 w-4 text-emerald-300 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-extrabold truncate">Touche la carte pour placer le point</p>
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              setIsPickingLocation(false);
+              setShowAddModal(true);
+            }}
+            className="text-[11px] font-bold px-3 py-1.5 rounded-xl bg-white/10"
+          >
+            Retour
+          </button>
         </div>
       )}
 
-      {/* Add POI form — 2 étapes, rendu via portal pour éviter le clipping de la carte */}
+      {/* Dynamic info panel */}
+      {selectedFeature && (
+        <MapInfoPanel
+          selection={selectedFeature}
+          onClose={() => setSelectedFeature(null)}
+          pois={pois}
+          waypoints={waypoints}
+          sleepSpots={sleepSpots}
+          friends={friends}
+          photos={photos}
+          journal={journal}
+          tracks={pastTracks}
+          userLocation={userLocation}
+          currentFriendId={currentFriendId}
+        />
+      )}
+
+      {/* Add POI modal */}
       {showAddModal && clickCoords && (
-        <StepFormModal
+        <SimpleFormModal
           isOpen={showAddModal}
           onClose={closeAddPoiForm}
           title="Ajouter un point"
-          subtitle="Spot visible par tout l'équipage"
-          icon={<MapPin className="w-5 h-5" />}
-          steps={ADD_POI_STEPS}
-          currentStep={addPoiStep}
-          onStepClick={setAddPoiStep}
-          canAdvanceFromStep={canAdvancePoiStep}
-          onNext={goToNextPoiStep}
-          onPrevious={goToPreviousPoiStep}
-          onSubmit={handleCreatePoiSubmit}
-          submitLabel="Enregistrer le spot"
-          error={formError}
+          subtitle="Nom · type · emplacement"
+          icon={<MapPin className="h-4 w-4" />}
           titleId="add-poi-title"
+          onSubmit={handleCreatePoiSubmit}
+          footer={
+            <FormModalFooter
+              onCancel={closeAddPoiForm}
+              submitLabel="Enregistrer"
+              canSubmit={Boolean(newPoiTitle.trim() && clickCoords)}
+            />
+          }
         >
-          {addPoiStep === 1 && (
-            <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-              <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 px-3.5 py-3">
-                <p className="text-[11px] font-semibold leading-relaxed text-emerald-900">
-                  Commence par nommer ton spot et choisir son type — l’emplacement vient à l’étape suivante.
-                </p>
-              </div>
-
-              <label className="block space-y-1.5">
-                <span className="text-[11px] font-bold text-[#17352b]">Nom du spot *</span>
-                <input
-                  type="text"
+          <CompactFormRoot>
+            <CompactFormHero>
+              <CompactFormField label="Nom *" tone="hero">
+                <CompactFormTextInput
+                  tone="hero"
                   required
-                  placeholder="Bivouac lac, fontaine, belvédère…"
+                  placeholder="Bivouac, fontaine, belvédère…"
                   value={newPoiTitle}
                   onChange={(e) => setNewPoiTitle(e.target.value)}
-                  className="w-full text-sm font-semibold px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#17352b]"
+                  className="font-extrabold"
                 />
-              </label>
-
+              </CompactFormField>
               <div>
-                <span className="block text-[11px] font-bold text-[#17352b] mb-2">Type</span>
-                <div className="grid grid-cols-3 gap-1.5">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-white/45">Type</p>
+                <div className="mt-1 grid grid-cols-3 gap-1">
                   {poiTypes.map((t) => (
                     <button
                       type="button"
                       key={t.id}
                       onClick={() => setNewPoiType(t.id)}
-                      className={`py-2.5 px-2 rounded-2xl text-[10px] leading-tight font-bold border transition-all ${
+                      className={`rounded-lg px-1 py-1.5 text-[10px] font-bold transition-colors ${
                         newPoiType === t.id
-                          ? 'border-[#17352b] bg-[#17352b] text-white shadow-sm'
-                          : 'border-[#17352b]/10 bg-white text-[#3d4a42] hover:bg-[#f5f1e7]'
+                          ? 'bg-white text-[#17352b]'
+                          : 'bg-white/10 text-white/80'
                       }`}
                     >
-                      <span className="block text-base leading-none mb-1">{t.emoji}</span>
+                      <span className="block text-sm leading-none">{t.emoji}</span>
                       {t.label}
                     </button>
                   ))}
                 </div>
               </div>
-            </div>
-          )}
+            </CompactFormHero>
 
-          {addPoiStep === 2 && (
-            <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-              <div className="rounded-2xl border border-[#17352b]/10 bg-[#17352b] p-4 text-white">
-                <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-emerald-300">Récapitulatif</p>
-                <p className="mt-1 truncate text-base font-extrabold">{newPoiTitle || 'Sans titre'}</p>
-                <p className="mt-0.5 text-[11px] font-medium text-white/70">
-                  {poiTypes.find((t) => t.id === newPoiType)?.emoji}{' '}
-                  {poiTypes.find((t) => t.id === newPoiType)?.label}
-                </p>
-              </div>
-
-              <div className="rounded-2xl border border-[#17352b]/10 bg-white p-3 space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-bold text-[#17352b]">Emplacement *</p>
-                    <p className="text-[11px] font-mono text-[#68756d] truncate">
-                      {clickCoords.lat.toFixed(5)}, {clickCoords.lng.toFixed(5)}
-                    </p>
-                  </div>
-                  <MapPin className="w-4 h-4 text-[#eb6c32] shrink-0" />
+            <CompactFormSection>
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-[#68756d]">
+                    Emplacement
+                  </p>
+                  <span className="truncate font-mono text-[9px] text-[#68756d]">
+                    {clickCoords.lat.toFixed(4)}, {clickCoords.lng.toFixed(4)}
+                  </span>
                 </div>
-                <div className="grid grid-cols-3 gap-1.5">
+                <div className="grid grid-cols-3 gap-1">
                   <button
                     type="button"
                     onClick={useMyLocation}
-                    className="flex flex-col items-center gap-1 rounded-xl bg-[#f5f1e7] px-2 py-2 text-[10px] font-bold text-[#17352b] hover:bg-[#ebe4d4]"
+                    className="flex flex-col items-center gap-0.5 rounded-lg bg-white px-1 py-1.5 text-[9px] font-bold text-[#17352b] ring-1 ring-[#17352b]/8"
                   >
-                    <Navigation2 className="w-3.5 h-3.5 text-[#eb6c32]" />
+                    <Navigation2 className="h-3 w-3 text-[#eb6c32]" />
                     Ma pos.
                   </button>
                   <button
                     type="button"
                     onClick={useMapCenter}
-                    className="flex flex-col items-center gap-1 rounded-xl bg-[#f5f1e7] px-2 py-2 text-[10px] font-bold text-[#17352b] hover:bg-[#ebe4d4]"
+                    className="flex flex-col items-center gap-0.5 rounded-lg bg-white px-1 py-1.5 text-[9px] font-bold text-[#17352b] ring-1 ring-[#17352b]/8"
                   >
-                    <Crosshair className="w-3.5 h-3.5 text-[#eb6c32]" />
+                    <Crosshair className="h-3 w-3 text-[#eb6c32]" />
                     Centre
                   </button>
                   <button
                     type="button"
                     onClick={startPickOnMap}
-                    className="flex flex-col items-center gap-1 rounded-xl bg-[#17352b] px-2 py-2 text-[10px] font-bold text-white hover:bg-[#285849]"
+                    className="flex flex-col items-center gap-0.5 rounded-lg bg-[#17352b] px-1 py-1.5 text-[9px] font-bold text-white"
                   >
-                    <MapPin className="w-3.5 h-3.5 text-emerald-300" />
-                    Sur carte
+                    <MapPin className="h-3 w-3 text-emerald-300" />
+                    Carte
                   </button>
                 </div>
               </div>
 
-              <label className="block space-y-1.5">
-                <span className="text-[11px] font-bold text-[#17352b]">
-                  Note <span className="font-medium text-[#68756d]">(optionnel)</span>
-                </span>
-                <input
-                  type="text"
+              <CompactFormField label="Note">
+                <CompactFormTextInput
                   placeholder="Ombre, calme, 4G…"
                   value={newPoiDesc}
                   onChange={(e) => setNewPoiDesc(e.target.value)}
-                  className="w-full text-xs font-medium px-3.5 py-2.5 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#17352b]"
                 />
-              </label>
+              </CompactFormField>
 
               <div>
-                <span className="block text-[11px] font-bold text-[#17352b] mb-2">Commodités</span>
-                <div className="flex flex-wrap gap-1.5">
+                <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-[#68756d]">
+                  Commodités
+                </p>
+                <div className="flex flex-wrap gap-1">
                   {[
                     { id: 'eau', label: '🚰 Eau' },
                     { id: 'ombre', label: '🌲 Ombre' },
@@ -820,42 +866,26 @@ export const MapView: React.FC<MapViewProps> = ({
                     { id: 'douche', label: '🚿 Douche' },
                     { id: 'vue_panoramique', label: '🏔️ Vue' },
                   ].map((item) => (
-                    <button
-                      type="button"
+                    <CompactFormChip
                       key={item.id}
+                      active={newPoiAmenities.includes(item.id)}
                       onClick={() => toggleAmenity(item.id)}
-                      className={`px-2.5 py-1.5 rounded-full text-[11px] font-semibold transition-colors ${
-                        newPoiAmenities.includes(item.id)
-                          ? 'bg-[#17352b] text-white'
-                          : 'bg-white text-[#3d4a42] ring-1 ring-[#17352b]/12'
-                      }`}
                     >
                       {item.label}
-                    </button>
+                    </CompactFormChip>
                   ))}
                 </div>
               </div>
-            </div>
-          )}
-        </StepFormModal>
+            </CompactFormSection>
+
+            {formError && (
+              <p className="rounded-lg border border-amber-100 bg-amber-50 px-2.5 py-1.5 text-[10px] font-semibold text-amber-800">
+                {formError}
+              </p>
+            )}
+          </CompactFormRoot>
+        </SimpleFormModal>
       )}
     </div>
   );
 };
-
-function getPoiIconConfig(type: PoiType) {
-  switch (type) {
-    case 'van_spot':
-      return { emoji: '🚐', bg: '#059669', label: 'Spot Van' };
-    case 'water':
-      return { emoji: '🚰', bg: '#0284c7', label: 'Point d\'Eau' };
-    case 'viewpoint':
-      return { emoji: '📸', bg: '#d97706', label: 'Panorama' };
-    case 'camping':
-      return { emoji: '⛺', bg: '#7c3aed', label: 'Camping' };
-    case 'fuel':
-      return { emoji: '⛽', bg: '#dc2626', label: 'Station' };
-    default:
-      return { emoji: '📍', bg: '#475569', label: 'Point d\'intérêt' };
-  }
-}

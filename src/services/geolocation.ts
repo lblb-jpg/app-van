@@ -23,18 +23,31 @@ export function geolocationErrorMessage(error: GeolocationPositionError) {
   }
 }
 
+export type GeoWatchOptions = {
+  highAccuracy?: boolean;
+  maximumAgeMs?: number;
+  minEmitIntervalMs?: number;
+  timeoutMs?: number;
+};
+
+const DEFAULT_GEO_OPTIONS: Required<GeoWatchOptions> = {
+  highAccuracy: true,
+  maximumAgeMs: 5_000,
+  minEmitIntervalMs: 0,
+  timeoutMs: 25_000,
+};
+
 export type GeoHandlers = {
   onPosition: (position: GeolocationPosition) => void;
   onStatus?: (status: GeoStatus) => void;
 };
 
 /**
- * Starts a resilient GPS session:
- * 1) fast getCurrentPosition (uses cache if already authorized)
- * 2) continuous high-accuracy watch
- * Does not re-prompt once the browser has granted permission.
+ * Starts a resilient GPS session with configurable accuracy / cadence.
+ * Prefer low-accuracy + long maximumAge when the app is in background.
  */
-export function startGeolocationWatch(handlers: GeoHandlers) {
+export function startGeolocationWatch(handlers: GeoHandlers, options: GeoWatchOptions = {}) {
+  const watchOptions = { ...DEFAULT_GEO_OPTIONS, ...options };
   if (!isGeolocationAvailable()) {
     handlers.onStatus?.({
       state: 'error',
@@ -65,9 +78,13 @@ export function startGeolocationWatch(handlers: GeoHandlers) {
   const applyPosition = (position: GeolocationPosition) => {
     if (cancelled) return;
 
-    const ts = position.timestamp || Date.now();
+    const now = Date.now();
+    const ts = position.timestamp || now;
     if (ts < lastEmittedTs - 250) return;
-    lastEmittedTs = ts;
+    if (watchOptions.minEmitIntervalMs > 0 && now - lastEmittedTs < watchOptions.minEmitIntervalMs) {
+      return;
+    }
+    lastEmittedTs = now;
 
     gotFix = true;
     alreadyGranted = true;
@@ -105,15 +122,15 @@ export function startGeolocationWatch(handlers: GeoHandlers) {
     alreadyGranted = granted || alreadyGranted;
     // Warm start from cache when already authorized — avoids a fresh "permission" feel.
     navigator.geolocation.getCurrentPosition(applyPosition, onError, {
-      enableHighAccuracy: !granted,
-      timeout: granted ? 12_000 : 20_000,
-      maximumAge: granted ? 120_000 : 15_000,
+      enableHighAccuracy: watchOptions.highAccuracy && !granted,
+      timeout: granted ? Math.min(watchOptions.timeoutMs, 12_000) : watchOptions.timeoutMs,
+      maximumAge: granted ? watchOptions.maximumAgeMs : Math.min(watchOptions.maximumAgeMs, 15_000),
     });
 
     watchId = navigator.geolocation.watchPosition(applyPosition, onError, {
-      enableHighAccuracy: true,
-      timeout: 25_000,
-      maximumAge: granted ? 5_000 : 0,
+      enableHighAccuracy: watchOptions.highAccuracy,
+      timeout: watchOptions.timeoutMs,
+      maximumAge: watchOptions.maximumAgeMs,
     });
   };
 

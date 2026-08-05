@@ -30,9 +30,79 @@ export const DEFAULT_FRIENDS: Friend[] = [
 export const DEFAULT_WAYPOINTS: Waypoint[] = [];
 export const DEFAULT_POIS: Poi[] = [];
 export const DEFAULT_JOURNAL: JournalNote[] = [];
-export const DEFAULT_EXPENSES: Expense[] = [];
+export const DEFAULT_EXPENSES: Expense[] = [
+  {
+    id: 'exp_demo_1',
+    description: 'Plein essence — Total',
+    amount: 87.5,
+    category: 'carburant',
+    date: '2026-08-01',
+    paidByFriendId: 'adel',
+    splitAmongFriendIds: ['adel', 'paul', 'yanis'],
+    splitType: 'equal',
+    currency: 'EUR',
+  },
+  {
+    id: 'exp_demo_2',
+    description: 'Courses Intermarché',
+    amount: 64.2,
+    category: 'courses',
+    date: '2026-08-02',
+    paidByFriendId: 'paul',
+    splitAmongFriendIds: ['adel', 'paul', 'yanis'],
+    splitType: 'equal',
+    currency: 'EUR',
+  },
+  {
+    id: 'exp_demo_3',
+    description: 'Péage A71',
+    amount: 18.4,
+    category: 'peage',
+    date: '2026-08-02',
+    paidByFriendId: 'yanis',
+    splitAmongFriendIds: ['adel', 'paul', 'yanis'],
+    splitType: 'equal',
+    currency: 'EUR',
+  },
+  {
+    id: 'exp_demo_4',
+    description: 'Resto du port — Arcachon',
+    amount: 72.0,
+    category: 'resto',
+    date: '2026-08-03',
+    paidByFriendId: 'adel',
+    splitAmongFriendIds: ['adel', 'paul', 'yanis'],
+    splitType: 'equal',
+    currency: 'EUR',
+  },
+  {
+    id: 'exp_demo_5',
+    description: 'Location paddle',
+    amount: 45.0,
+    category: 'activite',
+    date: '2026-08-03',
+    paidByFriendId: 'paul',
+    splitAmongFriendIds: ['paul', 'yanis'],
+    splitType: 'equal',
+    currency: 'EUR',
+    notes: 'Adel n’a pas participé',
+  },
+  {
+    id: 'exp_demo_6',
+    description: 'Bouteille gaz + adaptateur',
+    amount: 32.9,
+    category: 'autre',
+    date: '2026-08-04',
+    paidByFriendId: 'yanis',
+    splitAmongFriendIds: ['adel', 'paul', 'yanis'],
+    splitType: 'equal',
+    currency: 'EUR',
+  },
+];
 export const DEFAULT_PHOTOS: TripPhoto[] = [];
 export const DEFAULT_TRACKS: GpsTrack[] = [];
+
+const DEMO_EXPENSES_SEEDED_KEY = 'van_expenses_demo_seeded_v1';
 
 // IDB Keys
 const KEYS = {
@@ -86,7 +156,16 @@ export const dbService = {
   getJournal: () => loadData<JournalNote[]>(KEYS.JOURNAL, []),
   saveJournal: (notes: JournalNote[]) => saveData(KEYS.JOURNAL, notes),
 
-  getExpenses: () => loadData<Expense[]>(KEYS.EXPENSES, []),
+  getExpenses: async () => {
+    const expenses = await loadData<Expense[]>(KEYS.EXPENSES, []);
+    const demoSeeded = await get<boolean>(DEMO_EXPENSES_SEEDED_KEY);
+    if (!expenses.length && !demoSeeded && DEFAULT_EXPENSES.length) {
+      await saveData(KEYS.EXPENSES, DEFAULT_EXPENSES);
+      await set(DEMO_EXPENSES_SEEDED_KEY, true);
+      return DEFAULT_EXPENSES;
+    }
+    return expenses;
+  },
   saveExpenses: (expenses: Expense[]) => saveData(KEYS.EXPENSES, expenses),
 
   getPhotos: () => loadData<TripPhoto[]>(KEYS.PHOTOS, []),

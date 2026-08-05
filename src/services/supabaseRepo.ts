@@ -8,6 +8,7 @@ import type {
   JournalNote,
   Poi,
   PoiType,
+  SplitType,
   TripPhoto,
   Waypoint,
 } from '../types';
@@ -159,6 +160,60 @@ function expenseFingerprint(expense: Pick<Expense, 'description' | 'amount' | 'd
   return `${expense.description.trim().toLowerCase()}|${Number(expense.amount).toFixed(2)}|${toIsoDate(expense.date)}`;
 }
 
+function mapExpenseRow(row: any): Expense {
+  const splits = (row.expense_splits ?? []) as Array<{
+    user_id: string;
+    share_count?: number | string | null;
+    split_amount?: number | string | null;
+  }>;
+  const splitAmongFriendIds = splits.map((split) => split.user_id);
+  const splitType = (row.split_type as SplitType | null) ?? 'equal';
+  const splitDetails = splits.map((split) => ({
+    friendId: split.user_id,
+    shares: split.share_count != null ? Number(split.share_count) : undefined,
+    amount: split.split_amount != null ? Number(split.split_amount) : undefined,
+  }));
+
+  return {
+    id: row.id,
+    description: row.description?.trim() || 'Dépense',
+    amount: Number(row.amount),
+    category: row.category as ExpenseCategory,
+    date: toIsoDate(row.spent_on),
+    paidByFriendId: row.paid_by,
+    splitAmongFriendIds,
+    splitType,
+    splitDetails: splitDetails.length ? splitDetails : undefined,
+    currency: row.currency ?? 'EUR',
+    notes: row.notes ?? undefined,
+  };
+}
+
+function buildSplitRows(
+  expense: Omit<Expense, 'id'>,
+  memberIds: Set<string>,
+  paidBy: string,
+  currentUserId: string
+) {
+  const participants = (expense.splitAmongFriendIds?.length ? expense.splitAmongFriendIds : [paidBy])
+    .map((id) => asMemberId(id, currentUserId, memberIds))
+    .filter((id, idx, arr) => arr.indexOf(id) === idx);
+
+  const splitType = expense.splitType ?? 'equal';
+  const details = expense.splitDetails ?? [];
+
+  return participants.map((user_id) => {
+    const detail = details.find(
+      (item) => asMemberId(item.friendId, currentUserId, memberIds) === user_id
+    );
+    return {
+      user_id,
+      share_count: splitType === 'shares' ? (detail?.shares ?? 1) : 1,
+      split_amount: splitType === 'custom' && detail?.amount != null ? detail.amount : null,
+    };
+  });
+}
+
 function trackFingerprint(track: Pick<GpsTrack, 'title' | 'date' | 'distanceKm'>) {
   return `${track.title.trim().toLowerCase()}|${toIsoDate(track.date)}|${Number(track.distanceKm).toFixed(2)}`;
 }
@@ -304,7 +359,7 @@ export async function loadTripBundle(ctx: CloudContext) {
     supabase.from('photos').select('*').eq('trip_id', tripId).order('taken_on', { ascending: false }),
     supabase
       .from('expenses')
-      .select('*, expense_splits(user_id)')
+      .select('*, expense_splits(user_id, share_count, split_amount)')
       .eq('trip_id', tripId)
       .order('spent_on', { ascending: false }),
     supabase.from('gps_tracks').select('*').eq('trip_id', tripId).order('tracked_on', { ascending: false }),
@@ -405,15 +460,7 @@ export async function loadTripBundle(ctx: CloudContext) {
     (waypointsRes.data ?? []).map((row) => mapWaypoint(row, supabase))
   );
 
-  const expenses: Expense[] = (expensesRes.data ?? []).map((row: any) => ({
-    id: row.id,
-    description: row.description?.trim() || 'Dépense',
-    amount: Number(row.amount),
-    category: row.category as ExpenseCategory,
-    date: toIsoDate(row.spent_on),
-    paidByFriendId: row.paid_by,
-    splitAmongFriendIds: (row.expense_splits ?? []).map((s: { user_id: string }) => s.user_id),
-  }));
+  const expenses: Expense[] = (expensesRes.data ?? []).map(mapExpenseRow);
 
   const trackIds = (tracksRes.data ?? []).map((t) => t.id);
   let pointsByTrack = new Map<string, GpsPoint[]>();
@@ -607,41 +654,129 @@ export async function insertPhoto(ctx: CloudContext, photo: Omit<TripPhoto, 'id'
 export async function insertExpense(ctx: CloudContext, expense: Omit<Expense, 'id'> & { id?: string }) {
   const memberIds = new Set(await loadMemberIds(ctx));
   const paidBy = asMemberId(expense.paidByFriendId, ctx.user.id, memberIds);
-  const splits = (expense.splitAmongFriendIds?.length ? expense.splitAmongFriendIds : [paidBy])
-    .map((id) => asMemberId(id, ctx.user.id, memberIds))
-    .filter((id, idx, arr) => arr.indexOf(id) === idx);
+  const splitRows = buildSplitRows(expense, memberIds, paidBy, ctx.user.id);
 
-  const { data, error } = await ctx.supabase
-    .from('expenses')
-    .insert({
-      trip_id: ctx.tripId,
-      description: expense.description,
-      amount: expense.amount,
-      category: expense.category,
-      spent_on: toIsoDate(expense.date),
-      paid_by: paidBy,
-      created_by: ctx.user.id,
-    })
-    .select('*')
-    .single();
+  const baseRow = {
+    trip_id: ctx.tripId,
+    description: expense.description,
+    amount: expense.amount,
+    category: expense.category,
+    spent_on: toIsoDate(expense.date),
+    paid_by: paidBy,
+    created_by: ctx.user.id,
+    split_type: expense.splitType ?? 'equal',
+    currency: expense.currency ?? 'EUR',
+    notes: expense.notes ?? null,
+  };
+
+  let { data, error } = await ctx.supabase.from('expenses').insert(baseRow).select('*').single();
+
+  if (error && /split_type|currency|notes/i.test(error.message || '')) {
+    ({ data, error } = await ctx.supabase
+      .from('expenses')
+      .insert({
+        trip_id: ctx.tripId,
+        description: expense.description,
+        amount: expense.amount,
+        category: expense.category,
+        spent_on: toIsoDate(expense.date),
+        paid_by: paidBy,
+        created_by: ctx.user.id,
+      })
+      .select('*')
+      .single());
+  }
   if (error) throw error;
 
-  if (splits.length) {
-    const { error: splitError } = await ctx.supabase.from('expense_splits').insert(
-      splits.map((user_id) => ({ expense_id: data.id, user_id }))
-    );
+  if (splitRows.length) {
+    const splitPayload = splitRows.map((row) => ({ expense_id: data.id, ...row }));
+    let { error: splitError } = await ctx.supabase.from('expense_splits').insert(splitPayload);
+    if (splitError && /share_count|split_amount/i.test(splitError.message || '')) {
+      ({ error: splitError } = await ctx.supabase.from('expense_splits').insert(
+        splitRows.map((row) => ({ expense_id: data.id, user_id: row.user_id }))
+      ));
+    }
     if (splitError) throw splitError;
   }
 
-  return {
-    id: data.id,
-    description: data.description,
-    amount: Number(data.amount),
-    category: data.category as ExpenseCategory,
-    date: toIsoDate(data.spent_on),
-    paidByFriendId: data.paid_by,
-    splitAmongFriendIds: splits,
-  } satisfies Expense;
+  return mapExpenseRow({
+    ...data,
+    expense_splits: splitRows.map((row) => ({
+      user_id: row.user_id,
+      share_count: row.share_count,
+      split_amount: row.split_amount,
+    })),
+    split_type: expense.splitType ?? 'equal',
+    currency: expense.currency ?? 'EUR',
+    notes: expense.notes ?? null,
+  });
+}
+
+export async function updateExpense(ctx: CloudContext, id: string, expense: Omit<Expense, 'id'>) {
+  const memberIds = new Set(await loadMemberIds(ctx));
+  const paidBy = asMemberId(expense.paidByFriendId, ctx.user.id, memberIds);
+  const splitRows = buildSplitRows(expense, memberIds, paidBy, ctx.user.id);
+
+  const baseUpdate = {
+    description: expense.description,
+    amount: expense.amount,
+    category: expense.category,
+    spent_on: toIsoDate(expense.date),
+    paid_by: paidBy,
+    split_type: expense.splitType ?? 'equal',
+    currency: expense.currency ?? 'EUR',
+    notes: expense.notes ?? null,
+  };
+
+  let { data, error } = await ctx.supabase
+    .from('expenses')
+    .update(baseUpdate)
+    .eq('id', id)
+    .eq('trip_id', ctx.tripId)
+    .select('*')
+    .single();
+
+  if (error && /split_type|currency|notes/i.test(error.message || '')) {
+    ({ data, error } = await ctx.supabase
+      .from('expenses')
+      .update({
+        description: expense.description,
+        amount: expense.amount,
+        category: expense.category,
+        spent_on: toIsoDate(expense.date),
+        paid_by: paidBy,
+      })
+      .eq('id', id)
+      .eq('trip_id', ctx.tripId)
+      .select('*')
+      .single());
+  }
+  if (error) throw error;
+
+  await ctx.supabase.from('expense_splits').delete().eq('expense_id', id);
+
+  if (splitRows.length) {
+    const splitPayload = splitRows.map((row) => ({ expense_id: id, ...row }));
+    let { error: splitError } = await ctx.supabase.from('expense_splits').insert(splitPayload);
+    if (splitError && /share_count|split_amount/i.test(splitError.message || '')) {
+      ({ error: splitError } = await ctx.supabase.from('expense_splits').insert(
+        splitRows.map((row) => ({ expense_id: id, user_id: row.user_id }))
+      ));
+    }
+    if (splitError) throw splitError;
+  }
+
+  return mapExpenseRow({
+    ...data,
+    expense_splits: splitRows.map((row) => ({
+      user_id: row.user_id,
+      share_count: row.share_count,
+      split_amount: row.split_amount,
+    })),
+    split_type: expense.splitType ?? 'equal',
+    currency: expense.currency ?? 'EUR',
+    notes: expense.notes ?? null,
+  });
 }
 
 export async function deleteExpense(ctx: CloudContext, id: string) {
@@ -1085,52 +1220,92 @@ export async function migrateLocalBundleIfEmpty(
   return syncLocalDataToCloud(ctx, local);
 }
 
+export type RealtimeSyncStatus = 'connecting' | 'connected' | 'disconnected';
+
 export function subscribeTripRealtime(
   ctx: CloudContext,
   handlers: {
     onDataChange: () => void;
     onLocationChange?: (row: LiveLocationRow | null, eventType: string) => void;
+    onStatusChange?: (status: RealtimeSyncStatus) => void;
   } | (() => void)
 ) {
   const normalized =
     typeof handlers === 'function'
-      ? { onDataChange: handlers, onLocationChange: undefined }
+      ? { onDataChange: handlers, onLocationChange: undefined, onStatusChange: undefined }
       : handlers;
 
-  const channel = ctx.supabase
-    .channel(`trip-${ctx.tripId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'pois', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'waypoints', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'journal_notes', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'photos', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'gps_tracks', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_members', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'trips', filter: `id=eq.${ctx.tripId}` }, normalized.onDataChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'expense_splits' }, normalized.onDataChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'gps_track_points' }, normalized.onDataChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, normalized.onDataChange)
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'member_locations', filter: `trip_id=eq.${ctx.tripId}` },
-      (payload) => {
-        if (!normalized.onLocationChange) {
+  let activeChannel: ReturnType<SupabaseClient['channel']> | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+
+  const notifyStatus = (status: RealtimeSyncStatus) => {
+    normalized.onStatusChange?.(status);
+  };
+
+  const subscribe = () => {
+    if (disposed) return;
+    notifyStatus('connecting');
+
+    const channel = ctx.supabase
+      .channel(`trip-${ctx.tripId}-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pois', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'waypoints', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'journal_notes', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'photos', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'gps_tracks', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trip_members', filter: `trip_id=eq.${ctx.tripId}` }, normalized.onDataChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'trips', filter: `id=eq.${ctx.tripId}` }, normalized.onDataChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expense_splits' }, normalized.onDataChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'gps_track_points' }, normalized.onDataChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, normalized.onDataChange)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'member_locations', filter: `trip_id=eq.${ctx.tripId}` },
+        (payload) => {
+          if (!normalized.onLocationChange) {
+            normalized.onDataChange();
+            return;
+          }
+          if (payload.eventType === 'DELETE') {
+            const oldRow = payload.old as LiveLocationRow | undefined;
+            normalized.onLocationChange(oldRow ? { ...oldRow, lat: Number.NaN, lng: Number.NaN } : null, 'DELETE');
+            return;
+          }
+          const row = payload.new as LiveLocationRow;
+          normalized.onLocationChange(row, payload.eventType);
+        }
+      )
+      .subscribe((status) => {
+        if (disposed) return;
+        if (status === 'SUBSCRIBED') {
+          notifyStatus('connected');
           normalized.onDataChange();
           return;
         }
-        if (payload.eventType === 'DELETE') {
-          const oldRow = payload.old as LiveLocationRow | undefined;
-          normalized.onLocationChange(oldRow ? { ...oldRow, lat: Number.NaN, lng: Number.NaN } : null, 'DELETE');
-          return;
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          notifyStatus('disconnected');
+          if (activeChannel) {
+            void ctx.supabase.removeChannel(activeChannel);
+            activeChannel = null;
+          }
+          reconnectTimer = setTimeout(subscribe, 3_000);
         }
-        const row = payload.new as LiveLocationRow;
-        normalized.onLocationChange(row, payload.eventType);
-      }
-    )
-    .subscribe();
+      });
+
+    activeChannel = channel;
+  };
+
+  subscribe();
 
   return () => {
-    void ctx.supabase.removeChannel(channel);
+    disposed = true;
+    clearTimeout(reconnectTimer);
+    if (activeChannel) {
+      void ctx.supabase.removeChannel(activeChannel);
+      activeChannel = null;
+    }
   };
 }
 

@@ -111,6 +111,9 @@ create table public.expenses (
   category public.expense_category not null default 'autre',
   spent_on date not null default current_date,
   paid_by uuid not null references public.profiles(id) on delete restrict,
+  split_type text not null default 'equal' check (split_type in ('equal', 'shares', 'custom')),
+  currency text not null default 'EUR',
+  notes text,
   created_by uuid not null references public.profiles(id) on delete restrict default auth.uid(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -119,6 +122,8 @@ create table public.expenses (
 create table public.expense_splits (
   expense_id uuid not null references public.expenses(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
+  share_count numeric(8,2) not null default 1,
+  split_amount numeric(12,2),
   primary key (expense_id, user_id)
 );
 

@@ -130,8 +130,16 @@ create table if not exists public.expenses (
 create table if not exists public.expense_splits (
   expense_id uuid not null references public.expenses(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
+  share_count numeric(8,2) not null default 1,
+  split_amount numeric(12,2),
   primary key (expense_id, user_id)
 );
+
+alter table public.expenses add column if not exists split_type text not null default 'equal';
+alter table public.expenses add column if not exists currency text not null default 'EUR';
+alter table public.expenses add column if not exists notes text;
+alter table public.expense_splits add column if not exists share_count numeric(8,2) not null default 1;
+alter table public.expense_splits add column if not exists split_amount numeric(12,2);
 
 create table if not exists public.gps_tracks (
   id uuid primary key default gen_random_uuid(),

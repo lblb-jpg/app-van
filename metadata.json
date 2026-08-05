@@ -1,5 +1,5 @@
 {
   "name": "Vanlife Club",
-  "description": "PWA mobile-first pour road trip en van : GPS live, carte, étapes, radar équipage, talkie et budget partagé.",
-  "requestFramePermissions": ["geolocation", "camera", "microphone"]
+  "description": "PWA mobile-first pour road trip en van : carte, étapes et budget partagé.",
+  "requestFramePermissions": ["geolocation", "camera"]
 }

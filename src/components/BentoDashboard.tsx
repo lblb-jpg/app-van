@@ -1,10 +1,8 @@
 import React from 'react';
 import { 
-  Navigation as GpsIcon, 
   Milestone, 
   Receipt, 
   Camera, 
-  Radio, 
   MapPin, 
   Compass, 
   ArrowUpRight,
@@ -20,8 +18,6 @@ interface BentoDashboardProps {
   expenses: Expense[];
   photos: TripPhoto[];
   friends: Friend[];
-  totalDistanceKm: number;
-  isGpsRecording: boolean;
 }
 
 export const BentoDashboard: React.FC<BentoDashboardProps> = ({
@@ -30,8 +26,6 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
   expenses,
   photos,
   friends,
-  totalDistanceKm,
-  isGpsRecording
 }) => {
   const activeWaypoint = waypoints.find((w) => w.status === 'active') || waypoints[0];
   const totalSpent = expenses.reduce((acc, curr) => acc + curr.amount, 0);
@@ -54,16 +48,12 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
         <div className="mt-4">
           <h2 className="text-2xl font-black tracking-tight">Alpes & Lacs 2026 🏔️</h2>
           <p className="text-xs text-zinc-400 font-medium mt-1">
-            Suivi GPS en direct, spots de bivouac & gestion du budget vanlife.
+            Spots de bivouac, étapes du voyage & gestion du budget vanlife.
           </p>
         </div>
 
         {/* Quick Geometric Bento Stats Bar */}
-        <div className="grid grid-cols-3 gap-3 mt-5 pt-4 border-t border-zinc-800">
-          <div>
-            <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-bold block">Distance GPS</span>
-            <span className="text-base font-black font-mono text-emerald-400">{totalDistanceKm.toFixed(1)} km</span>
-          </div>
+        <div className="grid grid-cols-2 gap-3 mt-5 pt-4 border-t border-zinc-800">
           <div>
             <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-bold block">Budget Total</span>
             <span className="text-base font-black font-mono text-white">{totalSpent.toFixed(0)} €</span>
@@ -77,29 +67,7 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
 
       {/* Bento Grid Layout - Geometric Balance 2-Column Grid */}
       <div className="grid grid-cols-2 gap-3.5">
-        {/* Tile 1: GPS Live Tracker Quick View */}
-        <div
-          onClick={() => onNavigateTab('gps')}
-          className="bg-white rounded-[2rem] border border-zinc-200 p-5 shadow-xs hover:border-zinc-300 hover:shadow-sm transition-all cursor-pointer flex flex-col justify-between"
-        >
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-50 ring-1 ring-emerald-200 text-emerald-700 flex items-center justify-center font-bold">
-                <GpsIcon className="w-5 h-5 text-emerald-600" />
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-zinc-400" />
-            </div>
-            <h3 className="font-extrabold text-sm text-zinc-900">Tracé GPS</h3>
-            <p className="text-[11px] text-zinc-500 mt-0.5">
-              {isGpsRecording ? 'Enregistrement actif' : 'Prêt à enregistrer'}
-            </p>
-          </div>
-          <div className="mt-4 pt-3 border-t border-zinc-100 flex items-center justify-between text-xs font-bold text-emerald-700">
-            <span>{isGpsRecording ? '🔴 REC ACTIF' : '▶ Lancer'}</span>
-          </div>
-        </div>
-
-        {/* Tile 2: Next Stage Highlight */}
+        {/* Tile 1: Next Stage Highlight */}
         <div
           onClick={() => onNavigateTab('waypoints')}
           className="bg-white rounded-[2rem] border border-zinc-200 p-5 shadow-xs hover:border-zinc-300 hover:shadow-sm transition-all cursor-pointer flex flex-col justify-between"
@@ -146,25 +114,6 @@ export const BentoDashboard: React.FC<BentoDashboardProps> = ({
           </div>
         </div>
 
-        {/* Tile 4: Live Radar */}
-        <div
-          onClick={() => onNavigateTab('radar')}
-          className="bg-white rounded-[2rem] border border-zinc-200 p-5 shadow-xs hover:border-zinc-300 hover:shadow-sm transition-all cursor-pointer flex flex-col justify-between"
-        >
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-50 ring-1 ring-emerald-200 text-emerald-700 flex items-center justify-center font-bold">
-                <Radio className="w-5 h-5 text-emerald-600" />
-              </div>
-              <ArrowUpRight className="w-4 h-4 text-zinc-400" />
-            </div>
-            <h3 className="font-extrabold text-sm text-zinc-900">Radar Copains</h3>
-            <p className="text-[11px] text-zinc-500 mt-0.5">Positions live de l’équipage</p>
-          </div>
-          <div className="mt-4 pt-3 border-t border-zinc-100 text-xs font-bold text-emerald-700">
-            Ouvrir le radar ➔
-          </div>
-        </div>
       </div>
 
       {/* Latest Media Souvenir Tile */}

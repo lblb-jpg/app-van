@@ -74,6 +74,14 @@ export interface TripPhoto {
 
 export type ExpenseCategory = 'carburant' | 'peage' | 'courses' | 'resto' | 'activite' | 'autre';
 
+export type SplitType = 'equal' | 'shares' | 'custom';
+
+export interface SplitDetail {
+  friendId: string;
+  shares?: number;
+  amount?: number;
+}
+
 export interface Expense {
   id: string;
   description: string;
@@ -82,6 +90,10 @@ export interface Expense {
   date: string;
   paidByFriendId: string;
   splitAmongFriendIds: string[];
+  splitType?: SplitType;
+  splitDetails?: SplitDetail[];
+  currency?: string;
+  notes?: string;
 }
 
 export interface DebtSettlement {
@@ -157,4 +169,4 @@ export interface FrancePlace {
   lng: number;
 }
 
-export type TabType = 'map' | 'sleep' | 'gps' | 'radio' | 'waypoints' | 'journal' | 'budget' | 'radar';
+export type TabType = 'map' | 'sleep' | 'waypoints' | 'journal' | 'budget';

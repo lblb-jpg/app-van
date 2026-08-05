@@ -21,10 +21,12 @@ import {
 import type { FrancePlace, VanSleepSearchResult, VanSleepSpot } from '../types';
 import { geolocationErrorMessage, isGeolocationAvailable } from '../services/geolocation';
 import { markGeoGranted } from '../lib/permissions';
+import { getSleepSpotEmoji } from '../lib/mapCoords';
 import { searchVanSleepSpots, suggestFrenchPlaces } from '../services/vanSpots';
 
 interface VanSleepSearchProps {
   onSelectOnMap: (lat: number, lng: number, label?: string, emoji?: string) => void;
+  onSpotsChange?: (spots: VanSleepSpot[]) => void;
   onSaveSpot: (spot: VanSleepSpot) => void;
 }
 
@@ -49,14 +51,11 @@ function detailValue(value?: string) {
 }
 
 function getSpotEmoji(spot: VanSleepSpot) {
-  if (spot.type === 'camp_site') return '⛺';
-  if (spot.type === 'van_parking' || spot.type === 'parking') return '🅿️';
-  if (spot.type === 'motorhome_stopover' || spot.type === 'caravan_site') return '🚐';
-  return '📍';
+  return getSleepSpotEmoji(spot);
 }
 
 
-export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, onSaveSpot }) => {
+export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, onSpotsChange, onSaveSpot }) => {
   const [query, setQuery] = useState('');
   const [radiusKm, setRadiusKm] = useState(25);
   const [result, setResult] = useState<VanSleepSearchResult | null>(null);
@@ -204,6 +203,10 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
     return spots;
   }, [result, filter]);
 
+  useEffect(() => {
+    onSpotsChange?.(result?.spots || []);
+  }, [result, onSpotsChange]);
+
   const officialCount = useMemo(
     () => (result?.spots || []).filter((spot) => spot.confidence === 'official').length,
     [result]
@@ -251,7 +254,7 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                   setQuery(event.target.value);
                   setQueryEdited(true);
                 }}
-                placeholder="Annecy, Chamonix, Gordes…"
+                placeholder="Ville, région, spot…"
                 aria-label="Ville ou village"
                 className="min-w-0 flex-1 bg-transparent py-2.5 text-[13px] font-bold text-[#17352b] outline-none placeholder:text-zinc-400 sm:py-2 sm:text-sm"
               />

@@ -2,7 +2,7 @@
   "id": "/",
   "short_name": "Vanlife Club",
   "name": "Vanlife Club",
-  "description": "Carnet de route mobile : GPS, étapes, radar équipage et budget partagé.",
+  "description": "Carnet de route mobile : carte, étapes et budget partagé.",
   "lang": "fr",
   "dir": "ltr",
   "start_url": "/?source=pwa",

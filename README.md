@@ -1,6 +1,6 @@
 # Vanlife Club
 
-PWA mobile-first pour road trip en van : GPS live, carte, étapes, radar d’équipage, talkie, journal & budget partagé.
+PWA mobile-first pour road trip en van : carte, étapes, journal & budget partagé.
 
 ## Stack
 
@@ -30,7 +30,6 @@ Copie `.env.example` → `.env.local` (jamais committer `.env.local`).
 | `VITE_SUPABASE_URL` | URL du projet Supabase |
 | `VITE_SUPABASE_ANON_KEY` | Clé publishable (client) |
 | `SUPABASE_SERVICE_ROLE_KEY` | Optionnel, serveur uniquement |
-| `VITE_TURN_*` | Optionnel, TURN pour le talkie WebRTC |
 
 ## Scripts
 
@@ -47,14 +46,11 @@ Voir [`supabase/README.md`](supabase/README.md) pour le schéma SQL et l’ordre
 
 ## Fonctionnalités
 
-- **Carte** — spots, équipage live, traces GPS
+- **Carte** — spots, équipage live
 - **Dormir** — recherche de spots van
-- **GPS** — enregistrement, pause, import/export GPX
-- **Talkie** — push-to-talk WebRTC
 - **Étapes** — itinéraire, statuts, photos
 - **Journal** — notes & galerie
 - **VanPay** — dépenses type Tricount
-- **Radar** — distances & invitations
 
 ## Licence
 

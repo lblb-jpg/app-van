@@ -12,19 +12,17 @@ import {
   Trash2,
 } from 'lucide-react';
 import { JournalNote, TripPhoto, Friend, GpsPoint } from '../types';
-import { isGeolocationAvailable, reverseGeocodeCity } from '../services/geolocation';
-import { StepFormModal } from './StepFormModal';
+import { SimpleFormModal } from './SimpleFormModal';
+import {
+  CompactFormField,
+  CompactFormHero,
+  CompactFormRoot,
+  CompactFormSection,
+  CompactFormTextInput,
+  CompactFormTextarea,
+  FormModalFooter,
+} from './CompactFormLayout';
 import { ModalShell } from './ModalShell';
-
-const ADD_NOTE_STEPS = [
-  { id: 1, label: 'Infos', hint: 'Titre et lieu' },
-  { id: 2, label: 'Récit', hint: 'Histoire et photo' },
-] as const;
-
-const ADD_PHOTO_STEPS = [
-  { id: 1, label: 'Image', hint: 'Choisir une photo' },
-  { id: 2, label: 'Détails', hint: 'Légende et lieu' },
-] as const;
 
 function formatPhotoDate(isoDate: string) {
   const parsed = new Date(`${isoDate}T12:00:00`);
@@ -114,8 +112,6 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   const [selectedFriendFilter, setSelectedFriendFilter] = useState<string>('all');
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
-  const [noteStep, setNoteStep] = useState(1);
-  const [photoStep, setPhotoStep] = useState(1);
   const [selectedPhotoPreview, setSelectedPhotoPreview] = useState<TripPhoto | null>(null);
   const [photoToDelete, setPhotoToDelete] = useState<TripPhoto | null>(null);
 
@@ -131,7 +127,6 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   const [photoCaption, setPhotoCaption] = useState('');
   const [photoLocation, setPhotoLocation] = useState('');
   const [photoCoords, setPhotoCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [locationLoading, setLocationLoading] = useState(false);
 
   const handleCreateNote = (e: React.FormEvent) => {
     e.preventDefault();
@@ -153,7 +148,6 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
     setNoteLocation('');
     setNoteCoords(null);
     setNotePhotoUrl('');
-    setNoteStep(1);
     setShowNoteModal(false);
   };
 
@@ -175,7 +169,23 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
     setPhotoCaption('');
     setPhotoLocation('');
     setPhotoCoords(null);
-    setPhotoStep(1);
+    setShowPhotoModal(false);
+  };
+
+  const closeNoteModal = () => {
+    setNoteTitle('');
+    setNoteContent('');
+    setNoteLocation('');
+    setNoteCoords(null);
+    setNotePhotoUrl('');
+    setShowNoteModal(false);
+  };
+
+  const closePhotoModal = () => {
+    setPhotoUrlInput('');
+    setPhotoCaption('');
+    setPhotoLocation('');
+    setPhotoCoords(null);
     setShowPhotoModal(false);
   };
 
@@ -216,82 +226,6 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   const previewAuthor = selectedPhotoPreview
     ? friends.find((f) => f.id === selectedPhotoPreview.friendId)
     : undefined;
-
-  useEffect(() => {
-    if (!showNoteModal) return;
-
-    let cancelled = false;
-    const controller = new AbortController();
-
-    const applyCoords = async (lat: number, lng: number) => {
-      if (cancelled) return;
-      setNoteCoords({ lat, lng });
-      setLocationLoading(true);
-      try {
-        const city = await reverseGeocodeCity(lat, lng, controller.signal);
-        if (!cancelled && city) setNoteLocation(city);
-      } catch {
-        // Keep manual entry if reverse geocoding fails.
-      } finally {
-        if (!cancelled) setLocationLoading(false);
-      }
-    };
-
-    if (userLocation) {
-      void applyCoords(userLocation.lat, userLocation.lng);
-    } else if (isGeolocationAvailable()) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => void applyCoords(position.coords.latitude, position.coords.longitude),
-        () => {
-          if (!cancelled) setLocationLoading(false);
-        },
-        { enableHighAccuracy: true, timeout: 12_000, maximumAge: 60_000 }
-      );
-    }
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [showNoteModal, userLocation]);
-
-  useEffect(() => {
-    if (!showPhotoModal) return;
-
-    let cancelled = false;
-    const controller = new AbortController();
-
-    const applyCoords = async (lat: number, lng: number) => {
-      if (cancelled) return;
-      setPhotoCoords({ lat, lng });
-      setLocationLoading(true);
-      try {
-        const city = await reverseGeocodeCity(lat, lng, controller.signal);
-        if (!cancelled && city) setPhotoLocation(city);
-      } catch {
-        // Keep manual entry if reverse geocoding fails.
-      } finally {
-        if (!cancelled) setLocationLoading(false);
-      }
-    };
-
-    if (userLocation) {
-      void applyCoords(userLocation.lat, userLocation.lng);
-    } else if (isGeolocationAvailable()) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => void applyCoords(position.coords.latitude, position.coords.longitude),
-        () => {
-          if (!cancelled) setLocationLoading(false);
-        },
-        { enableHighAccuracy: true, timeout: 12_000, maximumAge: 60_000 }
-      );
-    }
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [showPhotoModal, userLocation]);
 
   useEffect(() => {
     if (!selectedPhotoPreview) return;
@@ -343,10 +277,8 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
             type="button"
             onClick={() => {
               if (activeTab === 'journal') {
-                setNoteStep(1);
                 setShowNoteModal(true);
               } else {
-                setPhotoStep(1);
                 setShowPhotoModal(true);
               }
             }}
@@ -504,174 +436,133 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
         </div>
       )}
 
-      {/* Add Journal Note Modal — 2 étapes */}
-      <StepFormModal
+      <SimpleFormModal
         isOpen={showNoteModal}
-        onClose={() => {
-          setNoteStep(1);
-          setNoteLocation('');
-          setNoteCoords(null);
-          setShowNoteModal(false);
-        }}
+        onClose={closeNoteModal}
         title="Nouvelle note"
-        subtitle="Raconte ta journée de vanlife"
-        icon={<BookOpen className="w-5 h-5" />}
-        iconBgClassName="bg-emerald-600"
-        steps={ADD_NOTE_STEPS}
-        currentStep={noteStep}
-        onStepClick={setNoteStep}
-        canAdvanceFromStep={(step) => {
-          if (step === 1) return Boolean(noteTitle.trim());
-          return Boolean(noteContent.trim());
-        }}
-        onNext={() => setNoteStep(2)}
-        onPrevious={() => setNoteStep(1)}
-        onSubmit={handleCreateNote}
-        submitLabel="Publier"
+        subtitle="Titre · lieu · récit"
+        icon={<BookOpen className="h-4 w-4" />}
         titleId="add-note-title"
+        onSubmit={handleCreateNote}
+        footer={
+          <FormModalFooter
+            onCancel={closeNoteModal}
+            submitLabel="Publier"
+            canSubmit={Boolean(noteTitle.trim() && noteContent.trim())}
+          />
+        }
       >
-        {noteStep === 1 && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-bold text-[#17352b]">Titre de l'anecdote *</span>
-              <input
-                type="text"
+        <CompactFormRoot>
+          <CompactFormHero>
+            <CompactFormField label="Titre *" tone="hero">
+              <CompactFormTextInput
+                tone="hero"
                 required
-                placeholder="ex: Apéro du soir & saucisson d'altitude"
+                placeholder="Apéro du soir, galère de route…"
                 value={noteTitle}
                 onChange={(e) => setNoteTitle(e.target.value)}
-                className="w-full text-sm font-semibold px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                className="font-extrabold"
               />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-bold text-[#17352b]">Lieu / Étape</span>
-              <input
-                type="text"
-                placeholder={locationLoading ? 'Localisation en cours…' : 'ex: Lac d\'Annecy'}
+            </CompactFormField>
+            <CompactFormField label="Lieu" tone="hero">
+              <CompactFormTextInput
+                tone="hero"
+                placeholder="Lac, bord de mer…"
                 value={noteLocation}
                 onChange={(e) => setNoteLocation(e.target.value)}
-                className="w-full text-sm font-medium px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
               />
-            </label>
-          </div>
-        )}
-        {noteStep === 2 && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-            <div className="rounded-2xl border border-[#17352b]/10 bg-[#17352b] p-4 text-white">
-              <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-emerald-300">Récapitulatif</p>
-              <p className="mt-1 truncate text-base font-extrabold">{noteTitle || 'Sans titre'}</p>
-              {noteLocation && (
-                <p className="mt-0.5 truncate text-[11px] font-medium text-white/70">📍 {noteLocation}</p>
-              )}
-            </div>
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-bold text-[#17352b]">Récit du jour *</span>
-              <textarea
-                rows={5}
+            </CompactFormField>
+          </CompactFormHero>
+
+          <CompactFormSection>
+            <CompactFormField label="Récit *">
+              <CompactFormTextarea
                 required
-                placeholder="Racontez la journée, les galères de route, les rires..."
+                rows={3}
+                placeholder="Raconte la journée…"
                 value={noteContent}
                 onChange={(e) => setNoteContent(e.target.value)}
-                className="w-full resize-none text-sm px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
               />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-bold text-[#17352b]">Photo d'illustration</span>
+            </CompactFormField>
+            <CompactFormField label="Photo">
               <input
                 type="file"
                 accept="image/*"
                 onChange={(e) => handleImageFileSelect(e, true)}
-                className="w-full text-xs text-[#68756d] file:mr-2 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-[#f5f1e7] file:text-[#17352b] hover:file:bg-[#ebe4d4]"
+                className="w-full text-[10px] text-[#68756d] file:mr-2 file:rounded-lg file:border-0 file:bg-white file:px-2 file:py-1 file:text-[10px] file:font-bold file:text-[#17352b]"
               />
               {notePhotoUrl && (
-                <div className="rounded-xl overflow-hidden border border-[#17352b]/10 h-32">
-                  <img src={notePhotoUrl} alt="Preview" className="w-full h-full object-cover" />
-                </div>
+                <img
+                  src={notePhotoUrl}
+                  alt=""
+                  className="mt-1.5 h-20 w-full rounded-lg border border-[#17352b]/10 object-cover"
+                />
               )}
-            </label>
-          </div>
-        )}
-      </StepFormModal>
+            </CompactFormField>
+          </CompactFormSection>
+        </CompactFormRoot>
+      </SimpleFormModal>
 
-      {/* Add Photo Modal — 2 étapes */}
-      <StepFormModal
+      <SimpleFormModal
         isOpen={showPhotoModal}
-        onClose={() => {
-          setPhotoStep(1);
-          setShowPhotoModal(false);
-        }}
+        onClose={closePhotoModal}
         title="Ajouter une photo"
-        subtitle="Immortalise un moment de route"
-        icon={<Camera className="w-5 h-5" />}
-        iconBgClassName="bg-emerald-600"
-        steps={ADD_PHOTO_STEPS}
-        currentStep={photoStep}
-        onStepClick={setPhotoStep}
-        canAdvanceFromStep={(step) => {
-          if (step === 1) return Boolean(photoUrlInput.trim());
-          return true;
-        }}
-        onNext={() => setPhotoStep(2)}
-        onPrevious={() => setPhotoStep(1)}
-        onSubmit={handleCreatePhoto}
-        submitLabel="Ajouter"
+        subtitle="Image · légende · lieu"
+        icon={<Camera className="h-4 w-4" />}
         titleId="add-photo-title"
+        onSubmit={handleCreatePhoto}
+        footer={
+          <FormModalFooter
+            onCancel={closePhotoModal}
+            submitLabel="Ajouter"
+            canSubmit={Boolean(photoUrlInput.trim())}
+          />
+        }
       >
-        {photoStep === 1 && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-bold text-[#17352b]">Prendre / Choisir une image *</span>
+        <CompactFormRoot>
+          <CompactFormHero>
+            <CompactFormField label="Photo *" tone="hero">
               <input
                 type="file"
                 accept="image/*"
                 onChange={(e) => handleImageFileSelect(e, false)}
-                className="w-full text-xs text-[#68756d] file:mr-2 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 mb-2"
+                className="w-full text-[10px] text-white/70 file:mr-2 file:rounded-lg file:border-0 file:bg-white/15 file:px-2 file:py-1 file:text-[10px] file:font-bold file:text-white"
               />
-              <input
-                type="url"
-                placeholder="ou coller l'URL d'une image..."
-                value={photoUrlInput}
+              <CompactFormTextInput
+                tone="hero"
+                placeholder="ou URL d'image…"
+                value={photoUrlInput.startsWith('data:') ? '' : photoUrlInput}
                 onChange={(e) => setPhotoUrlInput(e.target.value)}
-                className="w-full text-sm px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                className="mt-1.5 border-white/15"
               />
-            </label>
-            {photoUrlInput && (
-              <div className="rounded-xl overflow-hidden border border-[#17352b]/10 h-40">
-                <img src={photoUrlInput} alt="Preview" className="w-full h-full object-cover" />
-              </div>
-            )}
-          </div>
-        )}
-        {photoStep === 2 && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-200">
-            {photoUrlInput && (
-              <div className="rounded-xl overflow-hidden border border-[#17352b]/10 h-36">
-                <img src={photoUrlInput} alt="Preview" className="w-full h-full object-cover" />
-              </div>
-            )}
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-bold text-[#17352b]">Légende de la photo</span>
-              <input
-                type="text"
-                placeholder="ex: Vue du van au coucher de soleil"
+              {photoUrlInput && (
+                <img
+                  src={photoUrlInput}
+                  alt=""
+                  className="mt-1.5 h-24 w-full rounded-lg border border-white/15 object-cover"
+                />
+              )}
+            </CompactFormField>
+          </CompactFormHero>
+
+          <CompactFormSection>
+            <CompactFormField label="Légende">
+              <CompactFormTextInput
+                placeholder="Coucher de soleil, vue du van…"
                 value={photoCaption}
                 onChange={(e) => setPhotoCaption(e.target.value)}
-                className="w-full text-sm px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
               />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-[11px] font-bold text-[#17352b]">Lieu</span>
-              <input
-                type="text"
-                placeholder={locationLoading ? 'Localisation en cours…' : 'ex: Annecy'}
+            </CompactFormField>
+            <CompactFormField label="Lieu">
+              <CompactFormTextInput
+                placeholder="Col, plage, spot…"
                 value={photoLocation}
                 onChange={(e) => setPhotoLocation(e.target.value)}
-                className="w-full text-sm px-3.5 py-3 rounded-2xl border border-[#17352b]/12 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
               />
-            </label>
-          </div>
-        )}
-      </StepFormModal>
+            </CompactFormField>
+          </CompactFormSection>
+        </CompactFormRoot>
+      </SimpleFormModal>
 
       {/* Immersive photo viewer */}
       {selectedPhotoPreview && (

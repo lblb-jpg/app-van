@@ -79,8 +79,6 @@ export const CrewManager: React.FC<CrewManagerProps> = ({ isOpen, onClose, onAdd
       color,
       battery: 100,
       lastActive: 'À l\'instant',
-      liveLat: 45.8992,
-      liveLng: 6.1294
     });
 
     resetForm();
