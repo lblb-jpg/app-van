@@ -1,0 +1,6 @@
+{
+  "name": "VanLife Road Trip & GPS Tracker",
+  "description": "Application PWA mobile-first épurée pour road trip en van: suivi GPS en direct, carte interactive, notes & photos par ami, budget Tricount, IA d'itinéraire hors-ligne et gestion des étapes.",
+  "requestFramePermissions": ["geolocation", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

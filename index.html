@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="fr" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#17352b" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#17352b" media="(prefers-color-scheme: dark)" />
+    <meta name="color-scheme" content="light" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Vanlife Club" />
+    <meta name="application-name" content="Vanlife Club" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta
+      name="description"
+      content="Vanlife Club — app mobile PWA : GPS, étapes, radar équipage et budget partagé."
+    />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <title>Vanlife Club</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+  </head>
+  <body class="h-full overflow-x-hidden">
+    <div id="root" class="h-full"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

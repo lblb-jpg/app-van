@@ -1,0 +1,626 @@
+import React, { useEffect, useState } from 'react';
+import { 
+  BookOpen, 
+  Camera, 
+  Image as ImageIcon, 
+  Plus, 
+  User, 
+  Calendar, 
+  MapPin, 
+  X, 
+  Filter, 
+  Heart, 
+  Share2,
+  Download
+} from 'lucide-react';
+import { JournalNote, TripPhoto, Friend } from '../types';
+
+function formatPhotoDate(isoDate: string) {
+  const parsed = new Date(`${isoDate}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return isoDate;
+  return parsed.toLocaleDateString('fr-FR', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+async function fileToPhotoDataUrl(file: File, maxSize = 1280): Promise<string> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Image illisible'));
+      img.src = objectUrl;
+    });
+
+    const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+    const width = Math.max(1, Math.round(image.width * scale));
+    const height = Math.max(1, Math.round(image.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas indisponible');
+    ctx.drawImage(image, 0, 0, width, height);
+    return canvas.toDataURL('image/jpeg', 0.84);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+const PhotoThumb: React.FC<{
+  src: string;
+  alt?: string;
+  className?: string;
+}> = ({ src, alt, className }) => {
+  const [failed, setFailed] = useState(false);
+
+  if (!src || failed) {
+    return (
+      <div className={`absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-zinc-800 text-zinc-400 ${className ?? ''}`}>
+        <ImageIcon className="w-7 h-7 opacity-60" />
+        <span className="text-[10px] font-medium">Aperçu indisponible</span>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt || 'Photo'}
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+      className={`absolute inset-0 w-full h-full object-cover ${className ?? ''}`}
+    />
+  );
+};
+
+interface JournalAndPhotosProps {
+  notes: JournalNote[];
+  photos: TripPhoto[];
+  friends: Friend[];
+  currentFriendId: string;
+  onAddNote: (newNote: Omit<JournalNote, 'id'>) => void;
+  onAddPhoto: (newPhoto: Omit<TripPhoto, 'id'>) => void;
+}
+
+export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
+  notes,
+  photos,
+  friends,
+  currentFriendId,
+  onAddNote,
+  onAddPhoto
+}) => {
+  const [activeTab, setActiveTab] = useState<'journal' | 'photos'>('journal');
+  const [selectedFriendFilter, setSelectedFriendFilter] = useState<string>('all');
+  const [showNoteModal, setShowNoteModal] = useState(false);
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [selectedPhotoPreview, setSelectedPhotoPreview] = useState<TripPhoto | null>(null);
+
+  // New Note Form State
+  const [noteTitle, setNoteTitle] = useState('');
+  const [noteContent, setNoteContent] = useState('');
+  const [noteLocation, setNoteLocation] = useState('Lac d\'Annecy');
+  const [notePhotoUrl, setNotePhotoUrl] = useState('');
+
+  // New Photo Form State
+  const [photoUrlInput, setPhotoUrlInput] = useState('');
+  const [photoCaption, setPhotoCaption] = useState('');
+  const [photoLocation, setPhotoLocation] = useState('Mont-Cenis');
+
+  const handleCreateNote = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!noteTitle.trim() || !noteContent.trim()) return;
+
+    onAddNote({
+      title: noteTitle.trim(),
+      content: noteContent.trim(),
+      date: new Date().toISOString().split('T')[0],
+      friendId: currentFriendId,
+      locationName: noteLocation.trim(),
+      photos: notePhotoUrl.trim() ? [notePhotoUrl.trim()] : []
+    });
+
+    setNoteTitle('');
+    setNoteContent('');
+    setNotePhotoUrl('');
+    setShowNoteModal(false);
+  };
+
+  const handleCreatePhoto = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!photoUrlInput.trim()) return;
+
+    onAddPhoto({
+      url: photoUrlInput.trim(),
+      caption: photoCaption.trim(),
+      date: new Date().toISOString().split('T')[0],
+      friendId: currentFriendId,
+      locationName: photoLocation.trim(),
+      lat: 45.8992,
+      lng: 6.1294
+    });
+
+    setPhotoUrlInput('');
+    setPhotoCaption('');
+    setShowPhotoModal(false);
+  };
+
+  const handleImageFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, isNote: boolean) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const dataUrl = await fileToPhotoDataUrl(file);
+      if (isNote) {
+        setNotePhotoUrl(dataUrl);
+      } else {
+        setPhotoUrlInput(dataUrl);
+      }
+    } catch {
+      // Fallback: raw data URL if canvas resize fails
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const result = event.target?.result as string;
+        if (!result) return;
+        if (isNote) setNotePhotoUrl(result);
+        else setPhotoUrlInput(result);
+      };
+      reader.readAsDataURL(file);
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const filteredNotes = notes.filter((n) =>
+    selectedFriendFilter === 'all' ? true : n.friendId === selectedFriendFilter
+  );
+
+  const filteredPhotos = photos.filter((p) =>
+    selectedFriendFilter === 'all' ? true : p.friendId === selectedFriendFilter
+  );
+
+  const previewAuthor = selectedPhotoPreview
+    ? friends.find((f) => f.id === selectedPhotoPreview.friendId)
+    : undefined;
+
+  useEffect(() => {
+    if (!selectedPhotoPreview) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedPhotoPreview(null);
+    };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [selectedPhotoPreview]);
+
+  return (
+    <div className="w-full max-w-lg mx-auto p-4 space-y-4 pb-28">
+      {/* Top Switcher & Action Header */}
+      <div className="bg-white border border-zinc-200 rounded-[2rem] p-4 shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-2xl ring-1 ring-zinc-200">
+            <button
+              onClick={() => setActiveTab('journal')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                activeTab === 'journal'
+                  ? 'bg-white text-zinc-900 shadow-xs'
+                  : 'text-zinc-600 hover:text-zinc-900'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5 text-emerald-600" /> Journal de Bord
+            </button>
+            <button
+              onClick={() => setActiveTab('photos')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                activeTab === 'photos'
+                  ? 'bg-white text-zinc-900 shadow-xs'
+                  : 'text-zinc-600 hover:text-zinc-900'
+              }`}
+            >
+              <Camera className="w-3.5 h-3.5 text-emerald-600" /> Galerie Media
+            </button>
+          </div>
+
+          <button
+            onClick={() => (activeTab === 'journal' ? setShowNoteModal(true) : setShowPhotoModal(true))}
+            className="p-2.5 rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white shadow-xs transition-all font-bold text-xs flex items-center gap-1"
+          >
+            <Plus className="w-4 h-4 text-emerald-400" /> {activeTab === 'journal' ? 'Note' : 'Photo'}
+          </button>
+        </div>
+
+        {/* Friend Filter Bar */}
+        <div className="flex items-center justify-between pt-1 border-t border-zinc-100">
+          <span className="text-xs font-bold text-zinc-500 flex items-center gap-1">
+            <Filter className="w-3.5 h-3.5 text-zinc-400" /> Filtrer par copain :
+          </span>
+          <select
+            value={selectedFriendFilter}
+            onChange={(e) => setSelectedFriendFilter(e.target.value)}
+            className="bg-zinc-100 text-xs font-bold text-zinc-800 rounded-xl px-2.5 py-1 focus:outline-hidden cursor-pointer ring-1 ring-zinc-200"
+          >
+            <option value="all">Tous les copains 🚐</option>
+            {friends.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* JOURNAL TAB */}
+      {activeTab === 'journal' && (
+        <div className="space-y-3">
+          {filteredNotes.length === 0 ? (
+            <div className="bg-white rounded-[2rem] p-8 text-center text-zinc-400 border border-zinc-200 text-xs font-medium">
+              Aucune note de journal pour ce filtre. Écrivez le premier souvenir de voyage !
+            </div>
+          ) : (
+            filteredNotes.map((note) => {
+              const author = friends.find((f) => f.id === note.friendId);
+
+              return (
+                <div
+                  key={note.id}
+                  className="bg-white border border-zinc-200 rounded-[2rem] p-5 shadow-xs space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <img
+                        src={author?.avatar}
+                        alt={author?.name}
+                        className="w-7 h-7 rounded-full object-cover ring-2 ring-white"
+                      />
+                      <div>
+                        <span className="text-xs font-bold" style={{ color: author?.color }}>
+                          {author?.name}
+                        </span>
+                        <p className="text-[10px] text-zinc-400 font-mono font-medium">{note.date}</p>
+                      </div>
+                    </div>
+
+                    {note.locationName && (
+                      <span className="text-[11px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-zinc-200 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                        <MapPin className="w-3 h-3 text-emerald-600" /> {note.locationName}
+                      </span>
+                    )}
+                  </div>
+
+                  <h3 className="font-extrabold text-sm text-zinc-900 leading-snug">{note.title}</h3>
+                  <p className="text-xs text-zinc-600 leading-relaxed whitespace-pre-line">{note.content}</p>
+
+                  {note.photos && note.photos.length > 0 && (
+                    <div
+                      className="mt-2 relative h-44 rounded-2xl overflow-hidden border border-zinc-200 cursor-pointer"
+                      onClick={() =>
+                        setSelectedPhotoPreview({
+                          id: note.id,
+                          url: note.photos![0],
+                          caption: note.title,
+                          date: note.date,
+                          friendId: note.friendId,
+                          locationName: note.locationName
+                        })
+                      }
+                    >
+                      <PhotoThumb
+                        src={note.photos[0]}
+                        alt="Photo de note"
+                        className="hover:scale-105 transition-transform duration-300"
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+
+      {/* PHOTOS GALLERY TAB */}
+      {activeTab === 'photos' && (
+        <div className="space-y-3">
+          {filteredPhotos.length === 0 ? (
+            <div className="bg-white rounded-[2rem] p-8 text-center text-zinc-400 border border-zinc-200 text-xs font-medium">
+              Aucune photo disponible. Prenez une photo avec votre van !
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              {filteredPhotos.map((photo) => {
+                const author = friends.find((f) => f.id === photo.friendId);
+
+                return (
+                  <div
+                    key={photo.id}
+                    onClick={() => setSelectedPhotoPreview(photo)}
+                    className="group relative rounded-[2rem] overflow-hidden bg-zinc-900 border border-zinc-200 shadow-xs cursor-pointer aspect-square"
+                  >
+                    <PhotoThumb
+                      src={photo.url}
+                      alt={photo.caption}
+                      className="group-hover:scale-110 transition-transform duration-300"
+                    />
+                    <div className="absolute inset-0 z-10 bg-gradient-to-t from-zinc-950/85 via-transparent to-transparent opacity-90 p-3 flex flex-col justify-end pointer-events-none">
+                      <p className="text-white text-xs font-bold line-clamp-1">{photo.caption || 'Photo Van'}</p>
+                      <div className="flex items-center justify-between text-[10px] text-zinc-300 mt-1 font-mono">
+                        <span style={{ color: author?.color }} className="font-bold">
+                          {author?.name}
+                        </span>
+                        <span>{photo.date}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Add Journal Note Modal */}
+      {showNoteModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+              <h3 className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
+                <BookOpen className="w-4 h-4 text-emerald-600" /> Nouvelle Note au Journal
+              </h3>
+              <button
+                onClick={() => setShowNoteModal(false)}
+                className="p-1 rounded-full text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateNote} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Titre de l'anecdote *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="ex: Apéro du soir & saucisson d'altitude"
+                  value={noteTitle}
+                  onChange={(e) => setNoteTitle(e.target.value)}
+                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-emerald-500 bg-slate-50"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Lieu / Étape</label>
+                <input
+                  type="text"
+                  placeholder="ex: Lac d'Annecy"
+                  value={noteLocation}
+                  onChange={(e) => setNoteLocation(e.target.value)}
+                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Récit du jour *</label>
+                <textarea
+                  rows={4}
+                  required
+                  placeholder="Racontez la journée, les galères de route, les rires..."
+                  value={noteContent}
+                  onChange={(e) => setNoteContent(e.target.value)}
+                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50"
+                ></textarea>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Photo d'illustration</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleImageFileSelect(e, true)}
+                  className="w-full text-xs text-slate-500 file:mr-2 file:py-1 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowNoteModal(false)}
+                  className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 text-xs font-bold bg-emerald-600 text-white rounded-xl shadow-xs hover:bg-emerald-700"
+                >
+                  Publier la Note
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Photo Modal */}
+      {showPhotoModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+              <h3 className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
+                <Camera className="w-4 h-4 text-emerald-600" /> Ajouter une Photo Souvenir
+              </h3>
+              <button
+                onClick={() => setShowPhotoModal(false)}
+                className="p-1 rounded-full text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreatePhoto} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Prendre / Choisir une image *</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleImageFileSelect(e, false)}
+                  className="w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 mb-2"
+                />
+                <input
+                  type="url"
+                  placeholder="ou coller l'URL d'une image..."
+                  value={photoUrlInput}
+                  onChange={(e) => setPhotoUrlInput(e.target.value)}
+                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Légende de la photo</label>
+                <input
+                  type="text"
+                  placeholder="ex: Vue du van au coucher de soleil"
+                  value={photoCaption}
+                  onChange={(e) => setPhotoCaption(e.target.value)}
+                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Lieu</label>
+                <input
+                  type="text"
+                  placeholder="ex: Col du Galibier"
+                  value={photoLocation}
+                  onChange={(e) => setPhotoLocation(e.target.value)}
+                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 bg-slate-50"
+                />
+              </div>
+
+              {photoUrlInput && (
+                <div className="rounded-xl overflow-hidden border border-slate-200 h-32">
+                  <img src={photoUrlInput} alt="Preview" className="w-full h-full object-cover" />
+                </div>
+              )}
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPhotoModal(false)}
+                  className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 text-xs font-bold bg-emerald-600 text-white rounded-xl shadow-xs hover:bg-emerald-700"
+                >
+                  Ajouter à la Galerie
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Immersive photo viewer */}
+      {selectedPhotoPreview && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col bg-zinc-950/95 backdrop-blur-xl"
+          role="dialog"
+          aria-modal="true"
+          aria-label={selectedPhotoPreview.caption || 'Aperçu photo'}
+          onClick={() => setSelectedPhotoPreview(null)}
+        >
+          <div
+            className="flex items-center justify-between gap-3 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="min-w-0 flex items-center gap-2.5">
+              {previewAuthor?.avatar ? (
+                <img
+                  src={previewAuthor.avatar}
+                  alt=""
+                  className="h-8 w-8 rounded-full object-cover ring-2 ring-white/15"
+                />
+              ) : (
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800 ring-2 ring-white/10">
+                  <User className="h-4 w-4 text-zinc-400" />
+                </div>
+              )}
+              <div className="min-w-0">
+                <p
+                  className="truncate text-sm font-bold text-white"
+                  style={previewAuthor?.color ? { color: previewAuthor.color } : undefined}
+                >
+                  {previewAuthor?.name || 'Équipage'}
+                </p>
+                <p className="truncate text-[11px] font-medium text-zinc-400">
+                  {formatPhotoDate(selectedPhotoPreview.date)}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSelectedPhotoPreview(null)}
+              className="shrink-0 rounded-full bg-white/10 p-2.5 text-white ring-1 ring-white/15 transition hover:bg-white/20"
+              aria-label="Fermer"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div
+            className="relative flex min-h-0 flex-1 items-center justify-center px-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Soft vignette so the photo reads as the stage */}
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(255,255,255,0.06),transparent_65%)]"
+            />
+            <img
+              src={selectedPhotoPreview.url}
+              alt={selectedPhotoPreview.caption || 'Photo du voyage'}
+              className="relative z-10 max-h-full max-w-full rounded-lg object-contain shadow-[0_20px_60px_rgba(0,0,0,0.45)]"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          </div>
+
+          <div
+            className="relative px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="pointer-events-none absolute inset-x-0 -top-16 h-16 bg-gradient-to-t from-zinc-950 to-transparent" />
+            <div className="relative mx-auto w-full max-w-lg space-y-2">
+              <h3 className="text-lg font-extrabold leading-snug text-white">
+                {selectedPhotoPreview.caption?.trim() || 'Souvenir de route'}
+              </h3>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs font-medium text-zinc-300">
+                <span className="inline-flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5 text-emerald-400" />
+                  {selectedPhotoPreview.locationName?.trim() || 'Road trip'}
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-zinc-400">
+                  <Calendar className="h-3.5 w-3.5" />
+                  {formatPhotoDate(selectedPhotoPreview.date)}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
