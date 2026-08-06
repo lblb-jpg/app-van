@@ -42,6 +42,14 @@ import {
   updateWaypointStatus as cloudUpdateWaypointStatus,
   updateOwnProfile,
   upsertLiveLocation,
+  insertTrack,
+  insertTrackPoints,
+  updateTrackStats,
+  deletePoi as cloudDeletePoi,
+  deleteJournalNote as cloudDeleteJournalNote,
+  updatePoi as cloudUpdatePoi,
+  updateJournalNote as cloudUpdateJournalNote,
+  updateWaypoint as cloudUpdateWaypoint,
 } from './services/supabaseRepo';
 import { SYNC_DEBOUNCE_MS } from './services/syncConfig';
 import {
@@ -51,6 +59,13 @@ import {
   subscribePowerMode,
   type PowerProfile,
 } from './lib/powerMode';
+import {
+  appendTrailPoint,
+  getActiveTrack,
+  mergeIncomingTracks,
+  TRAIL_CLOUD_SYNC_MS,
+  TRAIL_PERSIST_MS,
+} from './lib/gpsTrail';
 import { Navigation } from './components/Navigation';
 import { WaypointsManager } from './components/WaypointsManager';
 import { JournalAndPhotos } from './components/JournalAndPhotos';
@@ -60,7 +75,7 @@ import { VanSleepSearch } from './components/VanSleepSearch';
 import { AuthModal } from './components/AuthModal';
 import { calculateHaversineDistance } from './services/gpx';
 import { startGeolocationWatch, type GeoStatus } from './services/geolocation';
-import { toUserFacingError } from './lib/userFacingError';
+import { toUserFacingError, isAuthExpiryError } from './lib/userFacingError';
 import {
   hydrateFriendAvatars,
   resolveFriendAvatar,
@@ -72,6 +87,7 @@ import { normalizeExpensesForFriends } from './lib/expenseSplit';
 import {
   CREW_MEMBER_NAMES,
   ensureCrewSession,
+  keepCrewSessionAlive,
   getStoredCrewUserMap,
   isCrewMemberName,
   resolveCrewNameByUserId,
@@ -158,6 +174,11 @@ export default function App() {
   const cloudRef = useRef<CloudContext | null>(null);
   const schemaCheckedRef = useRef(false);
   const tracksLoadedRef = useRef(false);
+  const tracksRef = useRef<GpsTrack[]>([]);
+  const trailPersistAtRef = useRef(0);
+  const trailCloudAtRef = useRef(0);
+  const trailSyncedCountRef = useRef<Record<string, number>>({});
+  const trailCloudCreatedRef = useRef<Set<string>>(new Set());
   const lastLivePushRef = useRef(0);
   const lastLiveCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   const userLocationRef = useRef<GpsPoint | null>(null);
@@ -174,6 +195,96 @@ export default function App() {
   useEffect(() => {
     powerProfileRef.current = powerProfile;
   }, [powerProfile]);
+
+  useEffect(() => {
+    tracksRef.current = tracks;
+  }, [tracks]);
+
+  const persistTracksSoon = (nextTracks: GpsTrack[], force = false) => {
+    const now = Date.now();
+    if (!force && now - trailPersistAtRef.current < TRAIL_PERSIST_MS) return;
+    trailPersistAtRef.current = now;
+    void dbService.saveTracks(nextTracks);
+  };
+
+  const syncTrailToCloud = (track: GpsTrack, force = false) => {
+    const ctx = cloudRef.current;
+    if (!ctx || !track.points.length) return;
+    const now = Date.now();
+    if (!force && now - trailCloudAtRef.current < TRAIL_CLOUD_SYNC_MS) return;
+    if (!force) trailCloudAtRef.current = now;
+
+    void (async () => {
+      try {
+        if (!trailCloudCreatedRef.current.has(track.id)) {
+          await insertTrack(ctx, {
+            ...track,
+            endTime: track.isActive ? undefined : track.endTime,
+          });
+          trailCloudCreatedRef.current.add(track.id);
+          trailSyncedCountRef.current[track.id] = track.points.length;
+          return;
+        }
+
+        const already = trailSyncedCountRef.current[track.id] ?? 0;
+        const fresh = track.points.slice(already);
+        if (fresh.length) {
+          await insertTrackPoints(ctx, track.id, fresh);
+          trailSyncedCountRef.current[track.id] = track.points.length;
+        }
+        await updateTrackStats(ctx, track.id, {
+          distanceKm: track.distanceKm,
+          avgSpeedKmH: track.avgSpeedKmH,
+          maxSpeedKmH: track.maxSpeedKmH,
+          endTime: track.isActive ? null : track.endTime ?? null,
+          title: track.title,
+        });
+      } catch (err) {
+        console.warn('Trail cloud sync failed', err);
+      }
+    })();
+  };
+
+  const recordTrailPointRef = useRef<(point: GpsPoint, accuracyM?: number) => void>(() => {});
+  recordTrailPointRef.current = (point: GpsPoint, accuracyM?: number) => {
+    const friendId = cloudRef.current?.user.id ?? currentFriendIdRef.current;
+    const before = tracksRef.current;
+    const next = appendTrailPoint(before, point, friendId, { accuracyM });
+    if (!next) return;
+    tracksRef.current = next;
+    setTracks(next);
+    persistTracksSoon(next);
+
+    // Day rollover: finalize the closed track in the cloud, then sync the new active one.
+    const closed = next.filter(
+      (track) => !track.isActive && before.some((prev) => prev.id === track.id && prev.isActive)
+    );
+    for (const track of closed) {
+      syncTrailToCloud(track, true);
+    }
+
+    const active = getActiveTrack(next);
+    if (active) syncTrailToCloud(active);
+  };
+
+  useEffect(() => {
+    const flush = () => {
+      persistTracksSoon(tracksRef.current, true);
+      for (const track of tracksRef.current) {
+        if (!track.points?.length) continue;
+        syncTrailToCloud(track, true);
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, []);
 
   useEffect(() => {
     setPowerModeTab(activeTab);
@@ -253,11 +364,23 @@ export default function App() {
     setExpenses(normalizedExpenses);
     setPhotos(remapped.photos);
     setWaypoints(remapped.waypoints);
-    setTracks(remapped.tracks);
+    const mergedTracks = mergeIncomingTracks(remapped.tracks, tracksRef.current);
+    tracksRef.current = mergedTracks;
+    setTracks(mergedTracks);
+    for (const track of mergedTracks) {
+      if ((track.points?.length ?? 0) > 0 && !track.isActive) {
+        trailCloudCreatedRef.current.add(track.id);
+        trailSyncedCountRef.current[track.id] = Math.max(
+          trailSyncedCountRef.current[track.id] ?? 0,
+          track.points.length
+        );
+      }
+    }
     currentFriendIdRef.current = selectedFriendId;
     setCurrentFriendId(selectedFriendId);
     void mirrorLocal({
       ...remapped,
+      tracks: mergedTracks,
       expenses: normalizedExpenses,
       friends: visibleFriends,
       currentFriendId: selectedFriendId,
@@ -281,6 +404,7 @@ export default function App() {
     setExpenses(e);
     setPhotos(ph);
     setWaypoints(w);
+    tracksRef.current = t;
     setTracks(t);
     const initialFriendId = currF || f[0]?.id || 'adel';
     currentFriendIdRef.current = initialFriendId;
@@ -295,6 +419,59 @@ export default function App() {
     await applyBundle(bundle, ctx.user.id);
     if (options?.includeTrackPoints) tracksLoadedRef.current = true;
     return bundle;
+  };
+
+  const pushLocalToCloud = async (ctx: CloudContext) => {
+    const local = {
+      pois: await dbService.getPois(),
+      waypoints: await dbService.getWaypoints(),
+      journal: await dbService.getJournal(),
+      photos: await dbService.getPhotos(),
+      expenses: await dbService.getExpenses(),
+      tracks: tracksRef.current.length ? tracksRef.current : await dbService.getTracks(),
+    };
+    const merged = await syncLocalDataToCloud(ctx, local);
+    await applyBundle(merged, ctx.user.id);
+    tracksLoadedRef.current = true;
+    return merged;
+  };
+
+  /** Always keep a live cloud context — silent re-login, no auth modal spam. */
+  const ensureCloudCtx = async (): Promise<CloudContext | null> => {
+    if (!isCloudConfigured()) return null;
+    if (cloudRef.current) {
+      void keepCrewSessionAlive();
+      return cloudRef.current;
+    }
+    await keepCrewSessionAlive();
+    const ok = await connectCloud({
+      migrateLocal: false,
+      skipCrewBootstrap: true,
+      skipSessionEnsure: true,
+    });
+    return ok ? cloudRef.current : null;
+  };
+
+  const withCloud = async <T,>(
+    action: (ctx: CloudContext) => Promise<T>,
+    fallbackMsg: string
+  ): Promise<T> => {
+    const ctx = await ensureCloudCtx();
+    if (!ctx) throw new Error(fallbackMsg);
+    try {
+      return await action(ctx);
+    } catch (err) {
+      if (!isAuthExpiryError(err)) throw err;
+      await keepCrewSessionAlive();
+      const ok = await connectCloud({
+        migrateLocal: false,
+        skipCrewBootstrap: true,
+        skipSessionEnsure: true,
+      });
+      const fresh = ok ? cloudRef.current : null;
+      if (!fresh) throw err;
+      return await action(fresh);
+    }
   };
 
   const connectCloud = async (options?: {
@@ -315,13 +492,19 @@ export default function App() {
     try {
       if (!options?.skipSessionEnsure) {
         await ensureCrewSession(resolvePreferredCrewName());
+      } else {
+        await keepCrewSessionAlive();
       }
 
       let ctx = await bootstrapCloud();
       if (!ctx) {
+        await keepCrewSessionAlive();
+        ctx = await bootstrapCloud();
+      }
+      if (!ctx) {
         cloudRef.current = null;
         setCloudReady(false);
-        setIsAuthModalOpen(true);
+        // Stay silent: crew accounts auto-reconnect; avoid auth-modal spam.
         return false;
       }
 
@@ -358,18 +541,8 @@ export default function App() {
       }
 
       if (options?.migrateLocal && !options?.cloudOnly) {
-        const local = {
-          pois: await dbService.getPois(),
-          waypoints: await dbService.getWaypoints(),
-          journal: await dbService.getJournal(),
-          photos: await dbService.getPhotos(),
-          expenses: await dbService.getExpenses(),
-          tracks: await dbService.getTracks(),
-        };
-
         try {
-          const merged = await syncLocalDataToCloud(ctx, local);
-          await applyBundle(merged, ctx.user.id);
+          await pushLocalToCloud(ctx);
         } catch (pushErr) {
           console.warn('Push local → cloud failed', pushErr);
         }
@@ -380,7 +553,26 @@ export default function App() {
       return true;
     } catch (err: any) {
       console.error('Cloud sync failed', err);
-      setSyncError(toUserFacingError(err, 'Synchronisation indisponible.'));
+      // Auth blips: silent retry once, never spam "session expirée".
+      if (isAuthExpiryError(err)) {
+        try {
+          await keepCrewSessionAlive();
+          const retry = await bootstrapCloud();
+          if (retry) {
+            cloudRef.current = retry;
+            setActiveTripIdState(retry.tripId);
+            await refreshFromCloud(retry, { includeTrackPoints: false });
+            setCloudReady(true);
+            setSyncError('');
+            return true;
+          }
+        } catch (retryErr) {
+          console.warn('Silent reconnect failed', retryErr);
+        }
+        setSyncError('');
+      } else {
+        setSyncError(toUserFacingError(err, 'Synchronisation indisponible.'));
+      }
       cloudRef.current = null;
       setCloudReady(false);
       return false;
@@ -422,6 +614,32 @@ export default function App() {
       }
     }
     void init();
+  }, []);
+
+  // Keep the crew JWT alive in the background — no auth prompts.
+  useEffect(() => {
+    if (!isCloudConfigured()) return;
+    const tick = () => {
+      void keepCrewSessionAlive().then((user) => {
+        if (user && !cloudRef.current) {
+          void connectCloud({
+            migrateLocal: false,
+            skipCrewBootstrap: true,
+            skipSessionEnsure: true,
+          });
+        }
+      });
+    };
+    tick();
+    const id = window.setInterval(tick, 4 * 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   useEffect(() => {
@@ -604,20 +822,29 @@ export default function App() {
         }
       },
       onPosition: (position) => {
-        const { latitude, longitude, altitude } = position.coords;
+        const { latitude, longitude, altitude, speed, accuracy } = position.coords;
         const now = position.timestamp || Date.now();
 
         const altMeters =
           altitude != null && Number.isFinite(altitude) ? Math.round(altitude) : undefined;
+        const speedKmh =
+          speed != null && Number.isFinite(speed) && speed >= 0
+            ? Math.round(speed * 3.6 * 10) / 10
+            : undefined;
 
         const newPoint: GpsPoint = {
           lat: latitude,
           lng: longitude,
           altitude: altMeters,
+          speed: speedKmh,
           timestamp: now,
         };
 
         userLocationRef.current = newPoint;
+        recordTrailPointRef.current(
+          newPoint,
+          accuracy != null && Number.isFinite(accuracy) ? accuracy : undefined
+        );
 
         const power = powerProfileRef.current;
         const shouldUpdateUi =
@@ -695,10 +922,16 @@ export default function App() {
       return;
     }
     setCloudSyncing(true);
-    // Refresh rapide : données métier seulement (pas les points GPS).
-    void refreshFromCloud(ctx, { includeTrackPoints: false })
-      .catch((err) => console.warn('Manual refresh failed', err))
-      .finally(() => setCloudSyncing(false));
+    void (async () => {
+      try {
+        await pushLocalToCloud(ctx);
+      } catch (err) {
+        console.warn('Push local → cloud failed', err);
+        await refreshFromCloud(ctx, { includeTrackPoints: tracksLoadedRef.current }).catch((pullErr) =>
+          console.warn('Manual refresh failed', pullErr)
+        );
+      }
+    })().finally(() => setCloudSyncing(false));
   };
 
   const resolveCrewAccountName = (friend: Friend): CrewMemberName | undefined => {
@@ -728,11 +961,11 @@ export default function App() {
     if (!friend) return;
 
     const crewName = crewAccountNamesRef.current[friendId] as CrewMemberName | undefined;
-    const ctx = cloudRef.current;
 
     if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
       if (!ctx) {
-        throw new Error('Connexion cloud requise pour enregistrer le profil.');
+        throw new Error('Cloud indisponible. Réessaie dans un instant.');
       }
       if (ctx.user.id !== friendId) {
         throw new Error('Bascule sur ce profil pour modifier ses informations.');
@@ -827,7 +1060,11 @@ export default function App() {
         await dbService.saveCurrentFriendId(user.id);
 
         let ctx = await bootstrapCloud();
-        if (!ctx) throw new Error('Session cloud indisponible.');
+        if (!ctx) {
+          await keepCrewSessionAlive();
+          ctx = await bootstrapCloud();
+        }
+        if (!ctx) throw new Error('Cloud indisponible. Réessaie dans un instant.');
         ctx = await ensureSharedCrewTrip(ctx, { skipCrewBootstrap: true });
         cloudRef.current = ctx;
         setActiveTripIdState(ctx.tripId);
@@ -858,10 +1095,10 @@ export default function App() {
   };
 
   const handleAddPoi = async (newPoiData: Omit<Poi, 'id' | 'createdAt'>) => {
-    const ctx = cloudRef.current;
     if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
       if (!ctx) {
-        const msg = 'Connexion cloud requise pour ajouter un spot.';
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
         setSyncError(msg);
         throw new Error(msg);
       }
@@ -887,11 +1124,59 @@ export default function App() {
     await dbService.savePois(updated);
   };
 
-  const handleAddJournalNote = async (newNoteData: Omit<JournalNote, 'id'>) => {
-    const ctx = cloudRef.current;
+  const handleDeletePoi = async (id: string) => {
     if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
       if (!ctx) {
-        const msg = 'Connexion cloud requise pour enregistrer la note.';
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
+        setSyncError(msg);
+        throw new Error(msg);
+      }
+      try {
+        await cloudDeletePoi(ctx, id);
+      } catch (err: any) {
+        const msg = toUserFacingError(err, 'Impossible de supprimer le spot.');
+        setSyncError(msg);
+        throw new Error(msg);
+      }
+    }
+    const updated = pois.filter((poi) => poi.id !== id);
+    setPois(updated);
+    await dbService.savePois(updated);
+  };
+
+  const handleUpdatePoi = async (id: string, data: Omit<Poi, 'id' | 'createdAt'>) => {
+    if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
+      if (!ctx) {
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
+        setSyncError(msg);
+        throw new Error(msg);
+      }
+      try {
+        const saved = await cloudUpdatePoi(ctx, id, data);
+        const updated = pois.map((poi) => (poi.id === id ? saved : poi));
+        setPois(updated);
+        await dbService.savePois(updated);
+        return;
+      } catch (err: any) {
+        const msg = toUserFacingError(err, 'Impossible de modifier le spot.');
+        setSyncError(msg);
+        throw new Error(msg);
+      }
+    }
+    const updated = pois.map((poi) =>
+      poi.id === id ? { ...poi, ...data } : poi
+    );
+    setPois(updated);
+    await dbService.savePois(updated);
+  };
+
+  const handleAddJournalNote = async (newNoteData: Omit<JournalNote, 'id'>) => {
+    if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
+      if (!ctx) {
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
         setSyncError(msg);
         throw new Error(msg);
       }
@@ -913,14 +1198,58 @@ export default function App() {
     await dbService.saveJournal(updated);
   };
 
+  const handleDeleteJournalNote = async (id: string) => {
+    if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
+      if (!ctx) {
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
+        setSyncError(msg);
+        throw new Error(msg);
+      }
+      try {
+        await cloudDeleteJournalNote(ctx, id);
+      } catch (err: any) {
+        const msg = toUserFacingError(err, 'Impossible de supprimer la note.');
+        setSyncError(msg);
+        throw new Error(msg);
+      }
+    }
+    const updated = journal.filter((note) => note.id !== id);
+    setJournal(updated);
+    await dbService.saveJournal(updated);
+  };
+
+  const handleUpdateJournalNote = async (id: string, data: Omit<JournalNote, 'id'>) => {
+    if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
+      if (!ctx) {
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
+        setSyncError(msg);
+        throw new Error(msg);
+      }
+      try {
+        const saved = await cloudUpdateJournalNote(ctx, id, data);
+        const updated = journal.map((note) => (note.id === id ? saved : note));
+        setJournal(updated);
+        await dbService.saveJournal(updated);
+        return;
+      } catch (err: any) {
+        const msg = toUserFacingError(err, 'Impossible de modifier la note.');
+        setSyncError(msg);
+        throw new Error(msg);
+      }
+    }
+    const updated = journal.map((note) => (note.id === id ? { ...data, id } : note));
+    setJournal(updated);
+    await dbService.saveJournal(updated);
+  };
+
   const handleAddPhoto = async (newPhotoData: Omit<TripPhoto, 'id'>) => {
-    const ctx = cloudRef.current;
     const isVideo = newPhotoData.mediaType === 'video';
     if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
       if (!ctx) {
-        const msg = isVideo
-          ? 'Connexion cloud requise pour ajouter la vidéo.'
-          : 'Connexion cloud requise pour ajouter la photo.';
+        const msg = 'Cloud indisponible. Réessaie dans un instant.';
         setSyncError(msg);
         throw new Error(msg);
       }
@@ -946,10 +1275,10 @@ export default function App() {
   };
 
   const handleDeletePhoto = async (id: string) => {
-    const ctx = cloudRef.current;
     if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
       if (!ctx) {
-        const msg = 'Connexion cloud requise pour supprimer la photo.';
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
         setSyncError(msg);
         throw new Error(msg);
       }
@@ -967,10 +1296,10 @@ export default function App() {
   };
 
   const handleAddExpense = async (newExpData: Omit<Expense, 'id'>) => {
-    const ctx = cloudRef.current;
     if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
       if (!ctx) {
-        const msg = 'Connexion cloud requise pour ajouter la dépense.';
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
         setSyncError(msg);
         throw new Error(msg);
       }
@@ -997,10 +1326,10 @@ export default function App() {
   };
 
   const handleUpdateExpense = async (id: string, data: Omit<Expense, 'id'>) => {
-    const ctx = cloudRef.current;
     if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
       if (!ctx) {
-        const msg = 'Connexion cloud requise pour modifier la dépense.';
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
         setSyncError(msg);
         throw new Error(msg);
       }
@@ -1031,10 +1360,10 @@ export default function App() {
   };
 
   const handleDeleteExpense = async (id: string) => {
-    const ctx = cloudRef.current;
     if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
       if (!ctx) {
-        const msg = 'Connexion cloud requise pour supprimer la dépense.';
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
         setSyncError(msg);
         throw new Error(msg);
       }
@@ -1054,10 +1383,10 @@ export default function App() {
   };
 
   const handleClearAllExpenses = async () => {
-    const ctx = cloudRef.current;
     if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
       if (!ctx) {
-        const msg = 'Connexion cloud requise pour réinitialiser les dépenses.';
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
         setSyncError(msg);
         throw new Error(msg);
       }
@@ -1074,10 +1403,10 @@ export default function App() {
   };
 
   const handleAddWaypoint = async (newWpData: Omit<Waypoint, 'id'>) => {
-    const ctx = cloudRef.current;
     if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
       if (!ctx) {
-        const msg = 'Connexion cloud requise pour ajouter l’étape.';
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
         setSyncError(msg);
         throw new Error(msg);
       }
@@ -1099,17 +1428,42 @@ export default function App() {
     await dbService.saveWaypoints(updated);
   };
 
+  const handleUpdateWaypoint = async (id: string, data: Omit<Waypoint, 'id'>) => {
+    if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
+      if (!ctx) {
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
+        setSyncError(msg);
+        throw new Error(msg);
+      }
+      try {
+        const saved = await cloudUpdateWaypoint(ctx, id, data);
+        const updated = waypoints.map((wp) => (wp.id === id ? saved : wp));
+        setWaypoints(updated);
+        await dbService.saveWaypoints(updated);
+        return;
+      } catch (err: any) {
+        const msg = toUserFacingError(err, 'Impossible de modifier l’étape.');
+        setSyncError(msg);
+        throw new Error(msg);
+      }
+    }
+    const updated = waypoints.map((wp) => (wp.id === id ? { ...data, id } : wp));
+    setWaypoints(updated);
+    await dbService.saveWaypoints(updated);
+  };
+
   const handleUpdateWaypointStatus = async (id: string, status: 'done' | 'active' | 'upcoming') => {
     const previous = waypoints;
     const updated = waypoints.map((w) => (w.id === id ? { ...w, status } : w));
     setWaypoints(updated);
     await dbService.saveWaypoints(updated);
-    const ctx = cloudRef.current;
     if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
       if (!ctx) {
         setWaypoints(previous);
         await dbService.saveWaypoints(previous);
-        setSyncError('Connexion cloud requise pour mettre à jour l’étape.');
+        setSyncError('Cloud indisponible. Réessaie dans un instant.');
         return;
       }
       try {
@@ -1140,12 +1494,12 @@ export default function App() {
     setWaypoints(sorted);
     await dbService.saveWaypoints(sorted);
 
-    const ctx = cloudRef.current;
     if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
       if (!ctx) {
         setWaypoints(previous);
         await dbService.saveWaypoints(previous);
-        const msg = 'Connexion cloud requise pour réordonner les étapes.';
+        const msg = 'Cloud indisponible. Réessaie dans un instant.';
         setSyncError(msg);
         throw new Error(msg);
       }
@@ -1162,10 +1516,10 @@ export default function App() {
   };
 
   const handleDeleteWaypoint = async (id: string) => {
-    const ctx = cloudRef.current;
     if (isCloudConfigured()) {
+      const ctx = await ensureCloudCtx();
       if (!ctx) {
-        const msg = 'Connexion cloud requise pour supprimer l’étape.';
+        const msg = 'Cloud indisponible. Réessaie dans un instant.'
         setSyncError(msg);
         throw new Error(msg);
       }
@@ -1201,7 +1555,7 @@ export default function App() {
         isRefreshing={cloudSyncing}
         onRefresh={handleManualRefresh}
         immersive={activeTab === 'map'}
-        syncError={syncError ? toUserFacingError(syncError) : ''}
+        syncError={syncError}
         onDismissSyncError={() => setSyncError('')}
       />
 
@@ -1234,11 +1588,13 @@ export default function App() {
                 waypoints={waypoints}
                 journal={journal}
                 pastTracks={tracks}
+                activeTrackPoints={getActiveTrack(tracks)?.points ?? []}
                 sleepSpots={sleepSearchSpots}
                 userLocation={userLocation}
                 focusLocation={mapFocus}
                 mapVisible={activeTab === 'map'}
                 onAddPoi={handleAddPoi}
+                onDeletePoi={handleDeletePoi}
               />
             </Suspense>
           </div>
@@ -1272,6 +1628,7 @@ export default function App() {
         {activeTab === 'waypoints' && (
           <WaypointsManager
             waypoints={waypoints}
+            userLocation={userLocation}
             onAddWaypoint={handleAddWaypoint}
             onUpdateWaypointStatus={handleUpdateWaypointStatus}
             onReorderWaypoint={handleReorderWaypoint}
@@ -1289,6 +1646,7 @@ export default function App() {
             authorId={activeAuthorId}
             userLocation={userLocation}
             onAddNote={handleAddJournalNote}
+            onDeleteNote={handleDeleteJournalNote}
             onAddPhoto={handleAddPhoto}
             onDeletePhoto={handleDeletePhoto}
           />

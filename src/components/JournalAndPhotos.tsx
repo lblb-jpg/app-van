@@ -254,6 +254,7 @@ interface JournalAndPhotosProps {
   authorId: string;
   userLocation: GpsPoint | null;
   onAddNote: (newNote: Omit<JournalNote, 'id'>) => void | Promise<void>;
+  onDeleteNote?: (id: string) => void | Promise<void>;
   onAddPhoto: (newPhoto: Omit<TripPhoto, 'id'>) => void | Promise<void>;
   onDeletePhoto: (id: string) => void | Promise<void>;
 }
@@ -266,6 +267,7 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   authorId,
   userLocation,
   onAddNote,
+  onDeleteNote,
   onAddPhoto,
   onDeletePhoto,
 }) => {
@@ -633,12 +635,30 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
                       </div>
                     </div>
 
-                    {note.locationName && (
-                      <span className="max-w-full sm:max-w-[55%] text-[11px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-zinc-200 px-2.5 py-1 rounded-full inline-flex items-center gap-1 min-w-0">
-                        <MapPin className="w-3 h-3 shrink-0 text-emerald-600" />
-                        <span className="truncate">{note.locationName}</span>
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {note.locationName && (
+                        <span className="max-w-full sm:max-w-[55%] text-[11px] font-semibold text-zinc-600 bg-zinc-100 ring-1 ring-zinc-200 px-2.5 py-1 rounded-full inline-flex items-center gap-1 min-w-0">
+                          <MapPin className="w-3 h-3 shrink-0 text-emerald-600" />
+                          <span className="truncate">{note.locationName}</span>
+                        </span>
+                      )}
+                      {onDeleteNote && (
+                        <button
+                          type="button"
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600 ring-1 ring-red-100"
+                          aria-label="Supprimer la note"
+                          title="Supprimer"
+                          onClick={() => {
+                            if (!window.confirm('Supprimer cette note du journal ?')) return;
+                            void onDeleteNote(note.id).catch((err) => {
+                              setFormError(err instanceof Error ? err.message : 'Impossible de supprimer la note.');
+                            });
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <h3 className="font-extrabold text-sm text-zinc-900 leading-snug">{note.title}</h3>

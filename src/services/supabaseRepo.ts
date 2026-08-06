@@ -189,6 +189,12 @@ function isLocalOnlyId(id: string | undefined) {
   return true;
 }
 
+/** True when the row is not yet present on the remote trip (by id). */
+function isMissingOnRemote(id: string | undefined, remoteIds: Set<string>) {
+  if (!id || isLocalOnlyId(id)) return true;
+  return !remoteIds.has(id);
+}
+
 function poiFingerprint(poi: Pick<Poi, 'title' | 'lat' | 'lng'>) {
   return `${poi.title.trim().toLowerCase()}|${poi.lat.toFixed(5)}|${poi.lng.toFixed(5)}`;
 }
@@ -776,11 +782,87 @@ export async function deletePoi(ctx: CloudContext, id: string) {
   if (error) throw error;
 }
 
+export async function updatePoi(
+  ctx: CloudContext,
+  id: string,
+  poi: Omit<Poi, 'id' | 'createdAt' | 'createdByFriendId'> & { createdByFriendId?: string }
+) {
+  let photoUrl = poi.photoUrl ?? null;
+  if (photoUrl && (photoUrl.startsWith('data:') || photoUrl.startsWith('blob:'))) {
+    const path = await uploadPhotoBlob(ctx.supabase, ctx.tripId, ctx.user.id, photoUrl, 'poi.jpg');
+    photoUrl = await resolvePhotoUrl(path, ctx.supabase);
+  }
+
+  const { data, error } = await ctx.supabase
+    .from('pois')
+    .update({
+      title: poi.title,
+      description: poi.description ?? null,
+      type: poi.type,
+      lat: poi.lat,
+      lng: poi.lng,
+      photo_url: photoUrl,
+      amenities: poi.amenities ?? [],
+    })
+    .eq('id', id)
+    .eq('trip_id', ctx.tripId)
+    .select('*')
+    .single();
+  if (error) throw error;
+
+  return {
+    id: data.id,
+    title: data.title,
+    description: data.description ?? undefined,
+    type: data.type as PoiType,
+    lat: data.lat,
+    lng: data.lng,
+    createdAt: data.created_at,
+    createdByFriendId: data.created_by,
+    photoUrl: data.photo_url ?? undefined,
+    amenities: data.amenities ?? [],
+  } satisfies Poi;
+}
+
 export async function deleteJournalNote(ctx: CloudContext, id: string) {
   // Linked gallery rows cascade via journal_note_id FK if configured; otherwise clear manually.
   await ctx.supabase.from('photos').delete().eq('journal_note_id', id).eq('trip_id', ctx.tripId);
   const { error } = await ctx.supabase.from('journal_notes').delete().eq('id', id).eq('trip_id', ctx.tripId);
   if (error) throw error;
+}
+
+export async function updateJournalNote(
+  ctx: CloudContext,
+  id: string,
+  note: Omit<JournalNote, 'id'>
+) {
+  const { data, error } = await ctx.supabase
+    .from('journal_notes')
+    .update({
+      title: note.title,
+      content: note.content,
+      happened_on: toIsoDate(note.date),
+      lat: note.lat ?? null,
+      lng: note.lng ?? null,
+      location_name: note.locationName ?? null,
+    })
+    .eq('id', id)
+    .eq('trip_id', ctx.tripId)
+    .select('*')
+    .single();
+  if (error) throw error;
+
+  return {
+    id: data.id,
+    title: data.title,
+    content: data.content,
+    date: toIsoDate(data.happened_on),
+    friendId: data.author_id,
+    lat: data.lat ?? undefined,
+    lng: data.lng ?? undefined,
+    locationName: data.location_name ?? undefined,
+    photos: note.photos ?? [],
+  } satisfies JournalNote;
 }
 
 export async function deletePhoto(ctx: CloudContext, id: string) {
@@ -1089,6 +1171,57 @@ export async function updateWaypointStatus(
   if (error) throw error;
 }
 
+export async function updateWaypoint(
+  ctx: CloudContext,
+  id: string,
+  waypoint: Omit<Waypoint, 'id'>
+) {
+  const existingPaths = (waypoint.photos ?? []).filter(
+    (p) => p && !p.startsWith('data:') && !p.startsWith('blob:')
+  );
+  const newSources = (waypoint.photos ?? []).filter(
+    (p) => p && (p.startsWith('data:') || p.startsWith('blob:'))
+  );
+  const uploaded = newSources.length ? await uploadWaypointPhotos(ctx, newSources) : [];
+  const photoPaths = [
+    ...existingPaths.map((p) => extractTripPhotoStoragePath(p) || p).filter(Boolean),
+    ...uploaded,
+  ];
+
+  const baseRow = {
+    position: waypoint.order,
+    title: waypoint.title,
+    location_name: waypoint.locationName,
+    lat: waypoint.lat,
+    lng: waypoint.lng,
+    scheduled_on: waypoint.date ? toIsoDate(waypoint.date) : null,
+    status: waypoint.status,
+    notes: waypoint.notes ?? null,
+    van_spot_type: waypoint.vanSpotType ?? null,
+    amenities: waypoint.amenities ?? [],
+  };
+
+  let { data, error } = await ctx.supabase
+    .from('waypoints')
+    .update({ ...baseRow, photo_urls: photoPaths })
+    .eq('id', id)
+    .eq('trip_id', ctx.tripId)
+    .select('*')
+    .single();
+
+  if (error && /photo_urls/i.test(error.message || '')) {
+    ({ data, error } = await ctx.supabase
+      .from('waypoints')
+      .update(baseRow)
+      .eq('id', id)
+      .eq('trip_id', ctx.tripId)
+      .select('*')
+      .single());
+  }
+  if (error) throw error;
+  return mapWaypoint(data, ctx.supabase);
+}
+
 export async function deleteWaypoint(ctx: CloudContext, id: string) {
   const { error } = await ctx.supabase.from('waypoints').delete().eq('id', id).eq('trip_id', ctx.tripId);
   if (error) throw error;
@@ -1179,7 +1312,8 @@ async function mapWaypoint(row: any, supabase?: SupabaseClient): Promise<Waypoin
   };
 }
 
-async function insertTrackPoints(ctx: CloudContext, trackId: string, points: GpsPoint[]) {
+export async function insertTrackPoints(ctx: CloudContext, trackId: string, points: GpsPoint[]) {
+  if (!points.length) return;
   for (let i = 0; i < points.length; i += POINT_CHUNK) {
     const chunk = points.slice(i, i + POINT_CHUNK).map((p) => ({
       track_id: trackId,
@@ -1190,8 +1324,34 @@ async function insertTrackPoints(ctx: CloudContext, trackId: string, points: Gps
       speed_kmh: p.speed ?? null,
     }));
     const { error } = await ctx.supabase.from('gps_track_points').insert(chunk);
-    if (error) throw error;
+    // Unique (track_id, recorded_at) — ignore already-synced duplicates.
+    if (error && error.code !== '23505') throw error;
   }
+}
+
+export async function updateTrackStats(
+  ctx: CloudContext,
+  trackId: string,
+  stats: {
+    distanceKm: number;
+    avgSpeedKmH: number;
+    maxSpeedKmH: number;
+    endTime?: number | null;
+    title?: string;
+  }
+) {
+  const { error } = await ctx.supabase
+    .from('gps_tracks')
+    .update({
+      distance_km: stats.distanceKm,
+      avg_speed_kmh: stats.avgSpeedKmH,
+      max_speed_kmh: stats.maxSpeedKmH,
+      ended_at: stats.endTime ? new Date(stats.endTime).toISOString() : null,
+      ...(stats.title ? { title: stats.title } : {}),
+    })
+    .eq('id', trackId)
+    .eq('trip_id', ctx.tripId);
+  if (error) throw error;
 }
 
 export async function insertTrack(ctx: CloudContext, track: Omit<GpsTrack, 'id'> & { id?: string }) {
@@ -1199,6 +1359,7 @@ export async function insertTrack(ctx: CloudContext, track: Omit<GpsTrack, 'id'>
   const { data, error } = await ctx.supabase
     .from('gps_tracks')
     .insert({
+      ...(track.id ? { id: track.id } : {}),
       trip_id: ctx.tripId,
       created_by: createdBy,
       title: track.title,
@@ -1228,6 +1389,7 @@ export async function insertTrack(ctx: CloudContext, track: Omit<GpsTrack, 'id'>
     maxSpeedKmH: Number(data.max_speed_kmh),
     createdByFriendId: data.created_by,
     points: track.points ?? [],
+    isActive: track.isActive,
   } satisfies GpsTrack;
 }
 
@@ -1406,8 +1568,11 @@ function hasLocalOnlyRows(local: {
 }
 
 /**
- * Push local-only rows to Supabase, then return the authoritative remote bundle.
- * Dedupes by fingerprint so we don't duplicate when remote already has the same item.
+ * Push every local domain to Supabase when missing remotely, then return the remote bundle.
+ * - Legacy local ids (poi_…, wp_…) are inserted as new cloud rows.
+ * - UUID rows absent from remote are inserted (keeps GPS trail ids).
+ * - Existing UUID tracks get missing points appended + stats refreshed.
+ * Dedupes by fingerprint so we don't duplicate content already on the trip.
  */
 export async function syncLocalDataToCloud(
   ctx: CloudContext,
@@ -1420,20 +1585,18 @@ export async function syncLocalDataToCloud(
     tracks: GpsTrack[];
   }
 ) {
-  if (!hasLocalOnlyRows(local)) {
-    return loadTripBundle(ctx);
-  }
-
-  const remote = await loadTripBundle(ctx);
+  const remote = await loadTripBundle(ctx, { includeTrackPoints: true });
   let pushed = 0;
   const errors: string[] = [];
 
+  const remotePoiIds = new Set(remote.pois.map((p) => p.id));
   const remotePoiKeys = new Set(remote.pois.map(poiFingerprint));
   for (const poi of local.pois) {
-    if (!isLocalOnlyId(poi.id)) continue;
+    if (!isMissingOnRemote(poi.id, remotePoiIds)) continue;
     if (remotePoiKeys.has(poiFingerprint(poi))) continue;
     try {
       const saved = await insertPoi(ctx, poi);
+      remotePoiIds.add(saved.id);
       remotePoiKeys.add(poiFingerprint(saved));
       pushed += 1;
     } catch (err: any) {
@@ -1441,27 +1604,29 @@ export async function syncLocalDataToCloud(
     }
   }
 
+  const remoteWpIds = new Set(remote.waypoints.map((w) => w.id));
   const remoteWpKeys = new Set(remote.waypoints.map(waypointFingerprint));
-  const localOnlyWaypoints = local.waypoints.filter(
-    (wp) => isLocalOnlyId(wp.id) && !remoteWpKeys.has(waypointFingerprint(wp))
+  const localWaypointsToPush = local.waypoints.filter(
+    (wp) => isMissingOnRemote(wp.id, remoteWpIds) && !remoteWpKeys.has(waypointFingerprint(wp))
   );
-  if (localOnlyWaypoints.length && !remote.waypoints.length) {
+  if (localWaypointsToPush.length && !remote.waypoints.length) {
     try {
       await replaceWaypoints(
         ctx,
-        localOnlyWaypoints.map((w, i) => ({ ...w, order: w.order || i + 1 }))
+        localWaypointsToPush.map((w, i) => ({ ...w, order: w.order || i + 1 }))
       );
-      pushed += localOnlyWaypoints.length;
+      pushed += localWaypointsToPush.length;
     } catch (err: any) {
       errors.push(`Waypoints: ${err?.message || err}`);
     }
   } else {
-    for (const [index, wp] of localOnlyWaypoints.entries()) {
+    for (const [index, wp] of localWaypointsToPush.entries()) {
       try {
         const saved = await insertWaypoint(ctx, {
           ...wp,
           order: wp.order || remote.waypoints.length + index + 1,
         });
+        remoteWpIds.add(saved.id);
         remoteWpKeys.add(waypointFingerprint(saved));
         pushed += 1;
       } catch (err: any) {
@@ -1470,12 +1635,14 @@ export async function syncLocalDataToCloud(
     }
   }
 
+  const remoteJournalIds = new Set(remote.journal.map((n) => n.id));
   const remoteJournalKeys = new Set(remote.journal.map(journalFingerprint));
   for (const note of local.journal) {
-    if (!isLocalOnlyId(note.id)) continue;
+    if (!isMissingOnRemote(note.id, remoteJournalIds)) continue;
     if (remoteJournalKeys.has(journalFingerprint(note))) continue;
     try {
       const saved = await insertJournalNote(ctx, note);
+      remoteJournalIds.add(saved.id);
       remoteJournalKeys.add(journalFingerprint(saved));
       pushed += 1;
     } catch (err: any) {
@@ -1483,14 +1650,15 @@ export async function syncLocalDataToCloud(
     }
   }
 
+  const remotePhotoIds = new Set(remote.photos.map((p) => p.id));
   const remotePhotoKeys = new Set(remote.photos.map(photoFingerprint));
   for (const photo of local.photos) {
-    if (!isLocalOnlyId(photo.id)) continue;
+    if (!isMissingOnRemote(photo.id, remotePhotoIds)) continue;
     if (remotePhotoKeys.has(photoFingerprint(photo))) continue;
-    // Skip empty / broken local placeholders.
     if (!photo.url) continue;
     try {
       const saved = await insertPhoto(ctx, photo);
+      remotePhotoIds.add(saved.id);
       remotePhotoKeys.add(photoFingerprint(saved));
       pushed += 1;
     } catch (err: any) {
@@ -1498,12 +1666,14 @@ export async function syncLocalDataToCloud(
     }
   }
 
+  const remoteExpenseIds = new Set(remote.expenses.map((e) => e.id));
   const remoteExpenseKeys = new Set(remote.expenses.map(expenseFingerprint));
   for (const expense of local.expenses) {
-    if (!isLocalOnlyId(expense.id)) continue;
+    if (!isMissingOnRemote(expense.id, remoteExpenseIds)) continue;
     if (remoteExpenseKeys.has(expenseFingerprint(expense))) continue;
     try {
       const saved = await insertExpense(ctx, expense);
+      remoteExpenseIds.add(saved.id);
       remoteExpenseKeys.add(expenseFingerprint(saved));
       pushed += 1;
     } catch (err: any) {
@@ -1511,13 +1681,39 @@ export async function syncLocalDataToCloud(
     }
   }
 
+  const remoteTrackById = new Map(remote.tracks.map((t) => [t.id, t]));
   const remoteTrackKeys = new Set(remote.tracks.map(trackFingerprint));
   for (const track of local.tracks) {
-    if (!isLocalOnlyId(track.id)) continue;
-    if (remoteTrackKeys.has(trackFingerprint(track))) continue;
     if (!track.points?.length) continue;
+    const existing = remoteTrackById.get(track.id);
+    if (existing) {
+      try {
+        const remoteTs = new Set((existing.points ?? []).map((p) => p.timestamp));
+        const fresh = track.points.filter((p) => !remoteTs.has(p.timestamp));
+        if (fresh.length) {
+          await insertTrackPoints(ctx, track.id, fresh);
+          pushed += 1;
+        }
+        await updateTrackStats(ctx, track.id, {
+          distanceKm: track.distanceKm,
+          avgSpeedKmH: track.avgSpeedKmH,
+          maxSpeedKmH: track.maxSpeedKmH,
+          endTime: track.isActive ? null : track.endTime ?? null,
+          title: track.title,
+        });
+      } catch (err: any) {
+        errors.push(`Trace GPS (maj): ${err?.message || err}`);
+      }
+      continue;
+    }
+
+    if (remoteTrackKeys.has(trackFingerprint(track))) continue;
     try {
-      const saved = await insertTrack(ctx, track);
+      const saved = await insertTrack(ctx, {
+        ...track,
+        endTime: track.isActive ? undefined : track.endTime,
+      });
+      remoteTrackById.set(saved.id, saved);
       remoteTrackKeys.add(trackFingerprint(saved));
       pushed += 1;
     } catch (err: any) {
@@ -1532,7 +1728,7 @@ export async function syncLocalDataToCloud(
     console.info(`Sync locale → Supabase: ${pushed} élément(s) poussé(s).`);
   }
 
-  return loadTripBundle(ctx);
+  return loadTripBundle(ctx, { includeTrackPoints: true });
 }
 
 /** @deprecated use syncLocalDataToCloud */

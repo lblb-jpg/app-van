@@ -170,4 +170,24 @@ export interface FrancePlace {
   lng: number;
 }
 
+export type FishingSpotKind = 'fishing_spot' | 'lake' | 'pond' | 'river' | 'shop';
+
+export interface FishingSpot {
+  id: string;
+  osmType: 'node' | 'way' | 'relation';
+  osmId: number;
+  name: string;
+  kind: FishingSpotKind;
+  label: string;
+  lat: number;
+  lng: number;
+  distanceKm: number;
+  water?: string;
+  access?: string;
+  fee?: string;
+  description?: string;
+  sourceUrl: string;
+  navigationUrl: string;
+}
+
 export type TabType = 'map' | 'sleep' | 'waypoints' | 'journal' | 'budget' | 'profile';

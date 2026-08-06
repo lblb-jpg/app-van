@@ -6,6 +6,7 @@ import {
   searchVanSleepSpots as runVanSleepSearch,
   suggestFrancePlaces as runFrancePlacesSuggest,
 } from "./src/server/sleepSearchApi";
+import { searchFishingSpotsAround as runFishingSearch } from "./src/server/fishingSearchApi";
 
 dotenv.config();
 dotenv.config({ path: ".env.local", override: true });
@@ -23,6 +24,7 @@ app.use((req, _res, next) => {
   if (pathOnly === "/api" || pathOnly.startsWith("/api/")) return next();
   if (
     pathOnly.startsWith("/van-spots") ||
+    pathOnly.startsWith("/fishing-spots") ||
     pathOnly.startsWith("/france-places") ||
     pathOnly.startsWith("/auth") ||
     pathOnly === "/health" ||
@@ -176,6 +178,27 @@ app.get("/api/van-spots/search", async (req, res) => {
         : error?.message || "Recherche de spots indisponible.";
     const status = message.includes("introuvable") ? 404 : message.includes("Indique") ? 400 : 502;
     return res.status(status).json({ error: message });
+  }
+});
+
+app.get("/api/fishing-spots/search", async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  const radiusKm = Math.max(5, Math.min(40, Number(req.query.radius) || 20));
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return res.status(400).json({ error: "Indique ta position (lat/lng) pour chercher autour." });
+  }
+
+  try {
+    const payload = await runFishingSearch(lat, lng, radiusKm);
+    return res.json(payload);
+  } catch (error: any) {
+    console.error("fishing-spots search error:", error);
+    const message =
+      error?.name === "AbortError"
+        ? "La recherche pêche a pris trop de temps. Réessaie."
+        : error?.message || "Recherche pêche indisponible.";
+    return res.status(502).json({ error: message });
   }
 });
 

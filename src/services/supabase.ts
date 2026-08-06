@@ -326,6 +326,39 @@ export async function ensureCrewSession(name: CrewMemberName = resolvePreferredC
   return switchToCrewMember(name);
 }
 
+/** Silently refresh / restore the preferred crew session (never prompts the user). */
+export async function keepCrewSessionAlive() {
+  const preferred = resolvePreferredCrewName();
+  try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+
+    const { data } = await supabase.auth.getSession();
+    const session = data.session;
+    if (session?.user && isCrewAccount(session.user)) {
+      // Proactively refresh before expiry when possible.
+      const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
+      if (expiresAt && expiresAt - Date.now() < 5 * 60_000) {
+        const { data: refreshed, error } = await supabase.auth.refreshSession();
+        if (!error && refreshed.session?.user) {
+          return refreshed.session.user;
+        }
+      }
+      return session.user;
+    }
+
+    return await switchToCrewMember(preferred);
+  } catch (err) {
+    console.warn('keepCrewSessionAlive failed', err);
+    try {
+      return await switchToCrewMember(preferred);
+    } catch (retryErr) {
+      console.warn('keepCrewSessionAlive retry failed', retryErr);
+      return null;
+    }
+  }
+}
+
 async function signInOrCreateCrewAccount(supabase: SupabaseClient, name: CrewMemberName) {
   const { email, password } = credentialsFromDisplayName(name);
   const signedIn = await supabase.auth.signInWithPassword({ email, password });

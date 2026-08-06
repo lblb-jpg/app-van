@@ -26,14 +26,17 @@ import type {
   TripPhoto,
   VanSleepSpot,
   Waypoint,
+  FishingSpot,
 } from '../types';
 import { getSleepSpotEmoji, sleepSpotBorderColor, getWaypointEmoji } from '../lib/mapCoords';
 import { isVideoMedia } from '../lib/mediaUtils';
+import { fishingSpotEmoji } from '../services/fishingSpots';
 
 export type MapSelection =
   | { type: 'poi'; id: string }
   | { type: 'waypoint'; id: string }
   | { type: 'sleepSpot'; id: string }
+  | { type: 'fishingSpot'; id: string }
   | { type: 'friend'; id: string }
   | { type: 'photo'; id: string }
   | { type: 'journal'; id: string }
@@ -46,12 +49,14 @@ interface MapInfoPanelProps {
   pois: Poi[];
   waypoints: Waypoint[];
   sleepSpots: VanSleepSpot[];
+  fishingSpots?: FishingSpot[];
   friends: Friend[];
   photos: TripPhoto[];
   journal: JournalNote[];
   tracks: GpsTrack[];
   userLocation: GpsPoint | null;
   currentFriendId: string;
+  onDeletePoi?: (id: string) => void | Promise<void>;
 }
 
 const AMENITY_LABELS: Record<string, string> = {
@@ -186,12 +191,14 @@ export const MapInfoPanel: React.FC<MapInfoPanelProps> = ({
   pois,
   waypoints,
   sleepSpots,
+  fishingSpots = [],
   friends,
   photos,
   journal,
   tracks,
   userLocation,
   currentFriendId,
+  onDeletePoi,
 }) => {
   const renderContent = () => {
     switch (selection.type) {
@@ -220,6 +227,17 @@ export const MapInfoPanel: React.FC<MapInfoPanelProps> = ({
               { icon: <User className="h-3.5 w-3.5" />, label: 'Par', value: creator?.name || 'Équipage' },
             ]} />
             <NavButtons lat={poi.lat} lng={poi.lng} />
+            {onDeletePoi && (
+              <button
+                type="button"
+                className="map-info-panel__danger"
+                onClick={() => {
+                  void Promise.resolve(onDeletePoi(poi.id)).then(() => onClose());
+                }}
+              >
+                Supprimer ce spot
+              </button>
+            )}
           </>
         );
       }
@@ -306,6 +324,39 @@ export const MapInfoPanel: React.FC<MapInfoPanelProps> = ({
                   <Phone className="h-3.5 w-3.5" /> {spot.phone}
                 </a>
               )}
+              <a href={spot.sourceUrl} target="_blank" rel="noreferrer" className="map-info-panel__link map-info-panel__link--muted">
+                <ExternalLink className="h-3.5 w-3.5" /> OpenStreetMap
+              </a>
+            </div>
+          </>
+        );
+      }
+
+      case 'fishingSpot': {
+        const spot = fishingSpots.find((s) => s.id === selection.id);
+        if (!spot) return null;
+        const emoji = fishingSpotEmoji(spot.kind);
+        return (
+          <>
+            <div className="map-info-panel__hero" style={{ '--hero-color': '#0284c7' } as React.CSSProperties}>
+              <span className="map-info-panel__emoji">{emoji}</span>
+              <div className="map-info-panel__hero-text">
+                <span className="map-info-panel__badge" style={{ background: '#0284c7' }}>{spot.label}</span>
+                <h2>{spot.name}</h2>
+                <p>{spot.distanceKm} km · coin d’eau</p>
+              </div>
+            </div>
+            <DetailGrid rows={[
+              { icon: <MapPin className="h-3.5 w-3.5" />, label: 'Type', value: spot.label },
+              { icon: <Mountain className="h-3.5 w-3.5" />, label: 'Eau', value: spot.water || '' },
+              { icon: <MapPin className="h-3.5 w-3.5" />, label: 'Accès', value: detailValue(spot.access) || '' },
+              { icon: <span className="text-xs font-bold">€</span>, label: 'Tarif', value: spot.fee === 'no' ? 'Gratuit' : spot.fee || '' },
+              { icon: <MapPin className="h-3.5 w-3.5" />, label: 'Coords', value: `${spot.lat.toFixed(5)}, ${spot.lng.toFixed(5)}` },
+            ]} />
+            {spot.description && <p className="map-info-panel__note">{spot.description}</p>}
+            <p className="map-info-panel__note">Vérifie la réglementation locale (carte de pêche, réserves) avant de lancer.</p>
+            <NavButtons lat={spot.lat} lng={spot.lng} />
+            <div className="map-info-panel__links">
               <a href={spot.sourceUrl} target="_blank" rel="noreferrer" className="map-info-panel__link map-info-panel__link--muted">
                 <ExternalLink className="h-3.5 w-3.5" /> OpenStreetMap
               </a>

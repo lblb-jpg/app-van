@@ -10,11 +10,14 @@ export function toUserFacingError(error: unknown, fallback = 'Action impossible 
   const message = raw.toLowerCase();
 
   if (!message) return fallback;
-  if (message.includes('row-level security') || message.includes('42501')) {
-    return 'Synchronisation refusée. Reconnecte-toi puis réessaie.';
+
+  // Real auth expiry only — never match "author_id", "Session cloud…", etc.
+  if (isAuthExpiryMessage(message)) {
+    return 'Reconnexion en cours…';
   }
-  if (message.includes('jwt') || message.includes('session') || message.includes('auth')) {
-    return 'Session expirée. Reconnecte-toi pour continuer.';
+
+  if (message.includes('row-level security') || message.includes('42501')) {
+    return 'Action non autorisée sur ce voyage. Change de profil ou réessaie.';
   }
   if (message.includes('network') || message.includes('fetch') || message.includes('failed to fetch')) {
     return 'Pas de connexion. Tes données restent en local.';
@@ -66,4 +69,30 @@ export function toUserFacingError(error: unknown, fallback = 'Action impossible 
   }
 
   return fallback;
+}
+
+/** True when Supabase rejected the JWT / refresh token. */
+export function isAuthExpiryError(error: unknown): boolean {
+  const raw =
+    typeof error === 'string'
+      ? error
+      : error && typeof error === 'object' && 'message' in error
+        ? String((error as { message?: unknown }).message || '')
+        : '';
+  return isAuthExpiryMessage(raw.toLowerCase());
+}
+
+function isAuthExpiryMessage(message: string) {
+  return (
+    message.includes('jwt expired') ||
+    message.includes('invalid jwt') ||
+    message.includes('invalid_grant') ||
+    message.includes('refresh_token') ||
+    message.includes('session missing') ||
+    message.includes('session not found') ||
+    message.includes('not authenticated') ||
+    message.includes('invalid claim') ||
+    message.includes('token is expired') ||
+    /auth session missing/.test(message)
+  );
 }

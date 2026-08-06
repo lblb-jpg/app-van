@@ -165,7 +165,18 @@ export function startGeolocationWatch(handlers: GeoHandlers, options: GeoWatchOp
 }
 
 /** Reverse-geocode coordinates to the nearest French commune (city/village). */
-export async function reverseGeocodeCity(lat: number, lng: number, signal?: AbortSignal) {
+export async function reverseGeocodeCity(
+  lat: number,
+  lng: number,
+  signal?: AbortSignal
+): Promise<{
+  name: string;
+  city: string;
+  label: string;
+  postalCode?: string;
+  lat: number;
+  lng: number;
+} | null> {
   const url = new URL('https://api-adresse.data.gouv.fr/reverse/');
   url.searchParams.set('lon', String(lng));
   url.searchParams.set('lat', String(lat));
@@ -175,11 +186,53 @@ export async function reverseGeocodeCity(lat: number, lng: number, signal?: Abor
   if (!response.ok) return null;
 
   const data = (await response.json()) as {
-    features?: Array<{ properties?: { city?: string; name?: string; label?: string } }>;
+    features?: Array<{
+      geometry?: { coordinates?: [number, number] };
+      properties?: {
+        city?: string;
+        name?: string;
+        label?: string;
+        postcode?: string;
+        context?: string;
+      };
+    }>;
   };
 
-  const props = data.features?.[0]?.properties;
+  const feature = data.features?.[0];
+  const props = feature?.properties;
   if (!props) return null;
 
-  return props.city?.trim() || props.name?.trim() || props.label?.split(',')[0]?.trim() || null;
+  const city = props.city?.trim() || props.name?.trim() || props.label?.split(',')[0]?.trim() || '';
+  if (!city) return null;
+
+  const postalCode = props.postcode?.trim() || undefined;
+  const name = postalCode ? `${city} (${postalCode.slice(0, 2)})` : city;
+  const coords = feature?.geometry?.coordinates;
+  const resolvedLng = coords?.[0];
+  const resolvedLat = coords?.[1];
+
+  return {
+    name,
+    city,
+    label: props.label?.trim() || name,
+    postalCode,
+    // Keep the live GPS fix for the pin; commune center is only a fallback.
+    lat: Number.isFinite(lat) ? lat : (resolvedLat ?? lat),
+    lng: Number.isFinite(lng) ? lng : (resolvedLng ?? lng),
+  };
+}
+
+/** One-shot high-accuracy position (for forms / “ma position”). */
+export function getCurrentPositionPrecise(timeoutMs = 12_000): Promise<GeolocationPosition> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('GPS indisponible sur cet appareil.'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: timeoutMs,
+      maximumAge: 15_000,
+    });
+  });
 }

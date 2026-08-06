@@ -134,6 +134,34 @@
     }
   }
 
+  /* Modal overlay — edge-to-edge blur (avoids bottom safe-area / URL-bar gap) */
+  .van-modal-root {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    min-height: 100%;
+    min-height: -webkit-fill-available;
+    min-height: 100dvh;
+  }
+
+  .van-modal-backdrop {
+    pointer-events: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    /* Extra stretch covers home indicator / mobile chrome subpixel gaps */
+    min-height: 100%;
+    min-height: -webkit-fill-available;
+    min-height: 100lvh;
+    background: rgb(23 53 43 / 40%);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+
   /* Android Chrome: solid panels instead of heavy blur (GPU savings) */
   .platform-android .van-header__inner,
   .platform-android .van-header__inner--immersive,
@@ -1103,6 +1131,9 @@
   }
 
   .map-toolbar__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
     padding: 0.35rem 0.65rem;
     border-radius: 999px;
     font-size: 0.62rem;
@@ -1115,6 +1146,15 @@
   .map-toolbar__chip--active {
     background: var(--forest);
     color: white;
+  }
+
+  .map-toolbar__hint {
+    margin: 0;
+    padding: 0 0.15rem;
+    font-size: 0.58rem;
+    font-weight: 700;
+    color: #68756d;
+    line-height: 1.35;
   }
 
   .map-toolbar__select {
@@ -1554,6 +1594,21 @@
 
   .map-info-panel__note--body {
     white-space: pre-line;
+  }
+
+  .map-info-panel__danger {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    margin-top: 0.35rem;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid rgb(220 38 38 / 25%);
+    border-radius: 0.9rem;
+    background: rgb(254 242 242);
+    color: #b91c1c;
+    font-size: 0.78rem;
+    font-weight: 800;
   }
 
   .map-info-panel__address {

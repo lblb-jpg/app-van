@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import {
   MapPin,
@@ -12,6 +12,8 @@ import {
   ChevronDown,
   Gauge,
   Mountain,
+  Fish,
+  LoaderCircle,
 } from 'lucide-react';
 import {
   Poi,
@@ -23,6 +25,7 @@ import {
   VanSleepSpot,
   Waypoint,
   JournalNote,
+  FishingSpot,
 } from '../types';
 import { FRANCE_MAP_CENTER, FRANCE_MAP_ZOOM, LOCAL_MAP_ZOOM, readStoredMapTile, saveStoredMapTile, type MapTileMode } from '../lib/mapDefaults';
 import { getSleepSpotEmoji, hasValidCoords, sleepSpotBorderColor, toLeafletCoords, getWaypointEmoji } from '../lib/mapCoords';
@@ -39,6 +42,13 @@ import {
   FormModalFooter,
 } from './CompactFormLayout';
 import { MapInfoPanel, MapSelection } from './MapInfoPanel';
+import {
+  filterFishingSpots,
+  fishingSpotEmoji,
+  searchFishingSpotsNearby,
+  type FishingFilter,
+} from '../services/fishingSpots';
+import { getCurrentPositionPrecise } from '../services/geolocation';
 
 interface MapViewProps {
   pois: Poi[];
@@ -61,6 +71,7 @@ interface MapViewProps {
   } | null;
   mapVisible?: boolean;
   onAddPoi: (newPoi: Omit<Poi, 'id' | 'createdAt'>) => void | Promise<void>;
+  onDeletePoi?: (id: string) => void | Promise<void>;
 }
 
 const TILE_LAYERS = {
@@ -133,10 +144,14 @@ export const MapView: React.FC<MapViewProps> = ({
   focusLocation,
   mapVisible = true,
   onAddPoi,
+  onDeletePoi,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
+  const pastTrackLayerRef = useRef<L.LayerGroup | null>(null);
+  const activeTrackLayerRef = useRef<L.LayerGroup | null>(null);
+  const activePolylineRef = useRef<L.Polyline | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const hasFlownToUserRef = useRef(false);
   const onSelectRef = useRef<(sel: MapSelection | null) => void>(() => {});
@@ -157,6 +172,13 @@ export const MapView: React.FC<MapViewProps> = ({
   const [newPoiAmenities, setNewPoiAmenities] = useState<string[]>(['eau', 'gratuit']);
   const [formError, setFormError] = useState('');
   const [savingPoi, setSavingPoi] = useState(false);
+  const [fishingEnabled, setFishingEnabled] = useState(false);
+  const [fishingFilter, setFishingFilter] = useState<FishingFilter>('all');
+  const [fishingRadiusKm, setFishingRadiusKm] = useState(20);
+  const [fishingSpots, setFishingSpots] = useState<FishingSpot[]>([]);
+  const [fishingLoading, setFishingLoading] = useState(false);
+  const [fishingError, setFishingError] = useState('');
+  const fishingAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     pickingLocationRef.current = isPickingLocation;
@@ -168,6 +190,64 @@ export const MapView: React.FC<MapViewProps> = ({
 
   useHistoryBack(Boolean(selectedFeature), () => setSelectedFeature(null));
   useHistoryBack(isPickingLocation, () => setIsPickingLocation(false));
+
+  const resolveSearchOrigin = useCallback(async () => {
+    if (userLocation && hasValidCoords(userLocation.lat, userLocation.lng)) {
+      return { lat: userLocation.lat, lng: userLocation.lng };
+    }
+    if (mapRef.current) {
+      const center = mapRef.current.getCenter();
+      if (hasValidCoords(center.lat, center.lng)) {
+        return { lat: center.lat, lng: center.lng };
+      }
+    }
+    const position = await getCurrentPositionPrecise();
+    return { lat: position.coords.latitude, lng: position.coords.longitude };
+  }, [userLocation]);
+
+  const runFishingSearch = useCallback(async () => {
+    if (!fishingEnabled) return;
+    fishingAbortRef.current?.abort();
+    const controller = new AbortController();
+    fishingAbortRef.current = controller;
+    setFishingLoading(true);
+    setFishingError('');
+    try {
+      const origin = await resolveSearchOrigin();
+      const spots = await searchFishingSpotsNearby({
+        lat: origin.lat,
+        lng: origin.lng,
+        radiusKm: fishingRadiusKm,
+        filter: 'all',
+        signal: controller.signal,
+      });
+      if (fishingAbortRef.current !== controller) return;
+      setFishingSpots(spots);
+      if (!spots.length) {
+        setFishingError('Aucun coin d’eau trouvé dans ce rayon.');
+      }
+    } catch (err) {
+      if ((err as DOMException)?.name === 'AbortError') return;
+      setFishingSpots([]);
+      setFishingError(err instanceof Error ? err.message : 'Recherche pêche impossible.');
+    } finally {
+      if (fishingAbortRef.current === controller) setFishingLoading(false);
+    }
+  }, [fishingEnabled, fishingRadiusKm, resolveSearchOrigin]);
+
+  useEffect(() => {
+    if (!fishingEnabled || !mapVisible) {
+      fishingAbortRef.current?.abort();
+      return;
+    }
+    void runFishingSearch();
+    return () => fishingAbortRef.current?.abort();
+  }, [fishingEnabled, fishingRadiusKm, mapVisible, runFishingSearch]);
+
+  const visibleFishingSpots = useMemo(
+    () => filterFishingSpots(fishingSpots, fishingFilter),
+    [fishingSpots, fishingFilter]
+  );
 
   // Initialize Leaflet once — container is visible on first mount (lazy-loaded tab).
   useEffect(() => {
@@ -191,6 +271,8 @@ export const MapView: React.FC<MapViewProps> = ({
     const tileLayer = createTileLayer(activeTile).addTo(map);
 
     tileLayerRef.current = tileLayer;
+    pastTrackLayerRef.current = L.layerGroup().addTo(map);
+    activeTrackLayerRef.current = L.layerGroup().addTo(map);
     layerGroupRef.current = L.layerGroup().addTo(map);
 
     map.on('click', (e: L.LeafletMouseEvent) => {
@@ -213,6 +295,9 @@ export const MapView: React.FC<MapViewProps> = ({
       mapRef.current = null;
       tileLayerRef.current = null;
       layerGroupRef.current = null;
+      pastTrackLayerRef.current = null;
+      activeTrackLayerRef.current = null;
+      activePolylineRef.current = null;
     };
   }, []);
 
@@ -279,6 +364,86 @@ export const MapView: React.FC<MapViewProps> = ({
       setSelectedFeature({ type: 'waypoint', id: matchWp.id });
     }
   }, [focusLocation?.requestId, sleepSpots, waypoints]);
+
+  // Past GPS trails (completed / loaded tracks)
+  useEffect(() => {
+    if (!mapRef.current || !pastTrackLayerRef.current) return;
+    const trackLayer = pastTrackLayerRef.current;
+    trackLayer.clearLayers();
+
+    pastTracks.forEach((track) => {
+      if (track.isActive) return;
+      const latlngs = (track.points ?? [])
+        .filter((p) => hasValidCoords(p.lat, p.lng))
+        .map((p) => [p.lat, p.lng] as L.LatLngExpression);
+      if (latlngs.length < 2) return;
+
+      L.polyline(latlngs, {
+        color: '#17352b',
+        weight: 3.5,
+        opacity: 0.55,
+        lineJoin: 'round',
+        lineCap: 'round',
+        interactive: true,
+      })
+        .on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          onSelectRef.current({ type: 'track', id: track.id });
+        })
+        .addTo(trackLayer);
+    });
+  }, [pastTracks]);
+
+  // Live breadcrumb trail while driving
+  useEffect(() => {
+    if (!mapRef.current || !activeTrackLayerRef.current) return;
+    const trackLayer = activeTrackLayerRef.current;
+    const validPoints = activeTrackPoints.filter((p) => hasValidCoords(p.lat, p.lng));
+    const latlngs = validPoints.map((p) => [p.lat, p.lng] as L.LatLngExpression);
+    const trailStart = validPoints[0];
+
+    // Keep a stable start marker; recreate layer contents only when the day-trail resets.
+    const startKey = trailStart ? `${trailStart.lat.toFixed(5)},${trailStart.lng.toFixed(5)}` : '';
+    const prevStartKey = (trackLayer as L.LayerGroup & { __startKey?: string }).__startKey;
+    if (startKey !== prevStartKey) {
+      trackLayer.clearLayers();
+      activePolylineRef.current = null;
+      (trackLayer as L.LayerGroup & { __startKey?: string }).__startKey = startKey;
+      if (trailStart) {
+        const startIcon = L.divIcon({
+          className: 'trail-start-marker',
+          html: `<div style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;background:#17352b;border:2px solid #fbbf24;box-shadow:0 4px 12px rgba(23,53,43,.25);font-size:13px;line-height:1;">🏁</div>`,
+          iconSize: [26, 26],
+          iconAnchor: [13, 13],
+        });
+        L.marker([trailStart.lat, trailStart.lng], { icon: startIcon, zIndexOffset: 200 }).addTo(
+          trackLayer
+        );
+      }
+    }
+
+    if (latlngs.length < 2) {
+      if (activePolylineRef.current) {
+        trackLayer.removeLayer(activePolylineRef.current);
+        activePolylineRef.current = null;
+      }
+      return;
+    }
+
+    if (activePolylineRef.current) {
+      activePolylineRef.current.setLatLngs(latlngs);
+      return;
+    }
+
+    activePolylineRef.current = L.polyline(latlngs, {
+      color: '#eb6c32',
+      weight: 4.5,
+      opacity: 0.92,
+      lineJoin: 'round',
+      lineCap: 'round',
+      interactive: false,
+    }).addTo(trackLayer);
+  }, [activeTrackPoints]);
 
   // Update markers & layers
   useEffect(() => {
@@ -359,6 +524,26 @@ export const MapView: React.FC<MapViewProps> = ({
         })
         .addTo(layerGroup);
     });
+
+    // Fishing / water spots nearby
+    if (fishingEnabled) {
+      visibleFishingSpots.forEach((spot) => {
+        if (!hasValidCoords(spot.lat, spot.lng)) return;
+        const emoji = fishingSpotEmoji(spot.kind);
+        const spotIcon = L.divIcon({
+          className: 'fishing-spot-marker',
+          html: `<div style="display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:999px;background:#e0f2fe;border:2px solid #0284c7;box-shadow:0 4px 14px rgba(2,132,199,.25);font-size:14px;line-height:1;">${emoji}</div>`,
+          iconSize: [30, 30],
+          iconAnchor: [15, 15],
+        });
+        L.marker([spot.lat, spot.lng], { icon: spotIcon, zIndexOffset: 350 })
+          .on('click', (e) => {
+            L.DomEvent.stopPropagation(e);
+            onSelectRef.current({ type: 'fishingSpot', id: spot.id });
+          })
+          .addTo(layerGroup);
+      });
+    }
 
     // Waypoints
     waypoints.forEach((wp) => {
@@ -497,13 +682,13 @@ export const MapView: React.FC<MapViewProps> = ({
   }, [
     pois,
     friends,
-    pastTracks,
-    activeTrackPoints,
     userLocation,
     photos,
     waypoints,
     journal,
     sleepSpots,
+    fishingEnabled,
+    visibleFishingSpots,
     focusLocation,
     selectedPoiTypeFilter,
     selectedFriendFilter,
@@ -626,8 +811,18 @@ export const MapView: React.FC<MapViewProps> = ({
     pois.length +
     waypoints.filter((w) => hasValidCoords(w.lat, w.lng)).length +
     sleepSpots.length +
+    (fishingEnabled ? visibleFishingSpots.length : 0) +
     photos.filter((p) => hasValidCoords(p.lat ?? 0, p.lng ?? 0)).length +
     journal.filter((n) => n.lat && n.lng).length;
+
+  const fishingFilters: { id: FishingFilter; label: string }[] = [
+    { id: 'all', label: 'Tous' },
+    { id: 'fishing_spot', label: 'Spots' },
+    { id: 'lake', label: 'Lacs' },
+    { id: 'pond', label: 'Étangs' },
+    { id: 'river', label: 'Cascades' },
+    { id: 'shop', label: 'Magasins' },
+  ];
 
   return (
     <div className="map-view flex min-h-0 flex-1 flex-col">
@@ -676,6 +871,75 @@ export const MapView: React.FC<MapViewProps> = ({
                 <option value="fuel">⛽ Carburant</option>
               </select>
             </div>
+
+            <div className="map-toolbar__row map-toolbar__row--wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  setFishingEnabled((prev) => {
+                    const next = !prev;
+                    if (!next) {
+                      setFishingSpots([]);
+                      setFishingError('');
+                    }
+                    return next;
+                  });
+                  setToolbarExpanded(true);
+                }}
+                className={`map-toolbar__chip ${fishingEnabled ? 'map-toolbar__chip--active' : ''}`}
+              >
+                <Fish className="h-3 w-3" />
+                Pêche alentours
+              </button>
+              {fishingEnabled && (
+                <>
+                  {[10, 20, 30].map((km) => (
+                    <button
+                      key={km}
+                      type="button"
+                      onClick={() => setFishingRadiusKm(km)}
+                      className={`map-toolbar__chip ${fishingRadiusKm === km ? 'map-toolbar__chip--active' : ''}`}
+                    >
+                      {km} km
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => void runFishingSearch()}
+                    disabled={fishingLoading}
+                    className="map-toolbar__chip"
+                  >
+                    {fishingLoading ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <Locate className="h-3 w-3" />}
+                    Relancer
+                  </button>
+                </>
+              )}
+            </div>
+
+            {fishingEnabled && (
+              <div className="map-toolbar__row map-toolbar__row--wrap">
+                {fishingFilters.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setFishingFilter(item.id)}
+                    className={`map-toolbar__chip ${fishingFilter === item.id ? 'map-toolbar__chip--active' : ''}`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {fishingEnabled && (
+              <p className="map-toolbar__hint">
+                {fishingLoading
+                  ? 'Recherche des coins d’eau…'
+                  : fishingError
+                    ? fishingError
+                    : `${visibleFishingSpots.length} lieu(x) · OpenStreetMap`}
+              </p>
+            )}
 
             {friends.length > 0 && (
               <div className="map-crew-bar map-crew-bar--compact">
@@ -775,12 +1039,14 @@ export const MapView: React.FC<MapViewProps> = ({
           pois={pois}
           waypoints={waypoints}
           sleepSpots={sleepSpots}
+          fishingSpots={visibleFishingSpots}
           friends={friends}
           photos={photos}
           journal={journal}
           tracks={pastTracks}
           userLocation={userLocation}
           currentFriendId={currentFriendId}
+          onDeletePoi={onDeletePoi}
         />
       )}
 

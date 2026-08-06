@@ -10,8 +10,10 @@ import {
   X,
   Camera,
   ImagePlus,
+  LocateFixed,
+  LoaderCircle,
 } from 'lucide-react';
-import { Waypoint } from '../types';
+import { GpsPoint, Waypoint } from '../types';
 import { getWaypointEmoji, hasValidCoords } from '../lib/mapCoords';
 import { SimpleFormModal } from './SimpleFormModal';
 import {
@@ -23,6 +25,7 @@ import {
   FormModalFooter,
 } from './CompactFormLayout';
 import { PlaceAutocompleteInput } from './PlaceAutocompleteInput';
+import { getCurrentPositionPrecise, reverseGeocodeCity } from '../services/geolocation';
 
 const withoutSource = (notes?: string) =>
   notes
@@ -58,6 +61,7 @@ async function fileToWaypointPhotoDataUrl(file: File, maxSize = 1280): Promise<s
 
 interface WaypointsManagerProps {
   waypoints: Waypoint[];
+  userLocation?: GpsPoint | null;
   onAddWaypoint: (newWp: Omit<Waypoint, 'id'>) => void | Promise<void>;
   onUpdateWaypointStatus: (id: string, status: 'done' | 'active' | 'upcoming') => void;
   onReorderWaypoint: (id: string, direction: 'up' | 'down') => void;
@@ -67,6 +71,7 @@ interface WaypointsManagerProps {
 
 export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
   waypoints,
+  userLocation = null,
   onAddWaypoint,
   onUpdateWaypointStatus,
   onReorderWaypoint,
@@ -84,6 +89,7 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
   const [photoError, setPhotoError] = useState('');
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [locating, setLocating] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const resetAddForm = () => {
@@ -95,6 +101,7 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
     setFormError('');
     setLat('');
     setLng('');
+    setLocating(false);
   };
 
   const openAddModal = () => {
@@ -115,6 +122,50 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
     Number.isFinite(parsedLng) &&
     !(parsedLat === 0 && parsedLng === 0);
   const canSubmitWaypoint = Boolean(title.trim() && locationName.trim() && hasValidPlaceCoords);
+
+  const useCurrentPlace = async () => {
+    if (locating) return;
+    setLocating(true);
+    setFormError('');
+    try {
+      let fixLat = userLocation?.lat;
+      let fixLng = userLocation?.lng;
+
+      if (
+        fixLat == null ||
+        fixLng == null ||
+        !Number.isFinite(fixLat) ||
+        !Number.isFinite(fixLng)
+      ) {
+        const position = await getCurrentPositionPrecise();
+        fixLat = position.coords.latitude;
+        fixLng = position.coords.longitude;
+      }
+
+      const place = await reverseGeocodeCity(fixLat, fixLng);
+      if (!place) {
+        setFormError('Impossible de trouver la ville à cette position.');
+        return;
+      }
+
+      setLocationName(place.name);
+      setLat(String(place.lat));
+      setLng(String(place.lng));
+      setFormError('');
+    } catch (err) {
+      const msg =
+        err instanceof GeolocationPositionError
+          ? err.code === err.PERMISSION_DENIED
+            ? 'Autorise la localisation pour utiliser ta position.'
+            : 'GPS indisponible pour le moment.'
+          : err instanceof Error
+            ? err.message
+            : 'Impossible de récupérer ta position.';
+      setFormError(msg);
+    } finally {
+      setLocating(false);
+    }
+  };
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -428,24 +479,44 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
               />
             </CompactFormField>
             <CompactFormField label="Lieu *" tone="hero">
-              <PlaceAutocompleteInput
-                tone="hero"
-                required
-                placeholder="Ville, spot, adresse…"
-                value={locationName}
-                onChange={(value) => {
-                  setLocationName(value);
-                  setLat('');
-                  setLng('');
-                  setFormError('');
-                }}
-                onSelectPlace={(place) => {
-                  setLocationName(place.name);
-                  setLat(String(place.lat));
-                  setLng(String(place.lng));
-                  setFormError('');
-                }}
-              />
+              <div className="space-y-1.5">
+                <PlaceAutocompleteInput
+                  tone="hero"
+                  required
+                  placeholder="Ville, spot, adresse…"
+                  value={locationName}
+                  onChange={(value) => {
+                    setLocationName(value);
+                    setLat('');
+                    setLng('');
+                    setFormError('');
+                  }}
+                  onSelectPlace={(place) => {
+                    setLocationName(place.name);
+                    setLat(String(place.lat));
+                    setLng(String(place.lng));
+                    setFormError('');
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => void useCurrentPlace()}
+                  disabled={locating}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-2.5 py-2 text-[10px] font-extrabold uppercase tracking-wide text-white transition enabled:active:scale-[0.99] disabled:opacity-60"
+                >
+                  {locating ? (
+                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <LocateFixed className="h-3.5 w-3.5" />
+                  )}
+                  {locating ? 'Recherche du lieu…' : 'Ma position · ville / village'}
+                </button>
+                {hasValidPlaceCoords && locationName.trim() && (
+                  <p className="px-0.5 text-[9px] font-semibold text-white/55">
+                    Coords GPS synchronisées · {parsedLat.toFixed(4)}, {parsedLng.toFixed(4)}
+                  </p>
+                )}
+              </div>
             </CompactFormField>
           </CompactFormHero>
 
