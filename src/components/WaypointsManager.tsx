@@ -58,7 +58,7 @@ async function fileToWaypointPhotoDataUrl(file: File, maxSize = 1280): Promise<s
 
 interface WaypointsManagerProps {
   waypoints: Waypoint[];
-  onAddWaypoint: (newWp: Omit<Waypoint, 'id'>) => void;
+  onAddWaypoint: (newWp: Omit<Waypoint, 'id'>) => void | Promise<void>;
   onUpdateWaypointStatus: (id: string, status: 'done' | 'active' | 'upcoming') => void;
   onReorderWaypoint: (id: string, direction: 'up' | 'down') => void;
   onDeleteWaypoint: (id: string) => void;
@@ -82,6 +82,8 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
   const [notes, setNotes] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
   const [photoError, setPhotoError] = useState('');
+  const [formError, setFormError] = useState('');
+  const [saving, setSaving] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   const resetAddForm = () => {
@@ -90,6 +92,7 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
     setNotes('');
     setPhotos([]);
     setPhotoError('');
+    setFormError('');
     setLat('');
     setLng('');
   };
@@ -100,32 +103,50 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
   };
 
   const closeAddModal = () => {
+    if (saving) return;
     resetAddForm();
     setShowAddModal(false);
   };
 
-  const canSubmitWaypoint = Boolean(title.trim() && locationName.trim());
+  const parsedLat = parseFloat(lat);
+  const parsedLng = parseFloat(lng);
+  const hasValidPlaceCoords =
+    Number.isFinite(parsedLat) &&
+    Number.isFinite(parsedLng) &&
+    !(parsedLat === 0 && parsedLng === 0);
+  const canSubmitWaypoint = Boolean(title.trim() && locationName.trim() && hasValidPlaceCoords);
 
-  const handleCreateSubmit = (e: React.FormEvent) => {
+  const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSubmitWaypoint) return;
+    setFormError('');
+    if (!title.trim() || !locationName.trim()) {
+      setFormError('Remplis le nom et le lieu.');
+      return;
+    }
+    if (!hasValidPlaceCoords) {
+      setFormError('Choisis une suggestion de lieu (coords requises).');
+      return;
+    }
 
-    const parsedLat = parseFloat(lat);
-    const parsedLng = parseFloat(lng);
-    const hasCoords = Number.isFinite(parsedLat) && Number.isFinite(parsedLng);
-
-    onAddWaypoint({
-      order: waypoints.length + 1,
-      title: title.trim(),
-      locationName: locationName.trim(),
-      lat: hasCoords ? parsedLat : 0,
-      lng: hasCoords ? parsedLng : 0,
-      status: 'upcoming',
-      notes: notes.trim() || undefined,
-      photos: photos.length ? photos : undefined,
-    });
-
-    closeAddModal();
+    setSaving(true);
+    try {
+      await onAddWaypoint({
+        order: waypoints.length + 1,
+        title: title.trim(),
+        locationName: locationName.trim(),
+        lat: parsedLat,
+        lng: parsedLng,
+        status: 'upcoming',
+        notes: notes.trim() || undefined,
+        photos: photos.length ? photos : undefined,
+      });
+      resetAddForm();
+      setShowAddModal(false);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Impossible d’ajouter l’étape.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handlePhotosSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -383,12 +404,13 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
         subtitle="Nom · lieu · détails"
         icon={<Milestone className="h-4 w-4" />}
         titleId="add-waypoint-title"
-        onSubmit={handleCreateSubmit}
+        onSubmit={(e) => void handleCreateSubmit(e)}
         footer={
           <FormModalFooter
             onCancel={closeAddModal}
             submitLabel="Ajouter l'étape"
             canSubmit={canSubmitWaypoint}
+            saving={saving}
             submitTone="sunset"
           />
         }
@@ -411,11 +433,17 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
                 required
                 placeholder="Ville, spot, adresse…"
                 value={locationName}
-                onChange={setLocationName}
+                onChange={(value) => {
+                  setLocationName(value);
+                  setLat('');
+                  setLng('');
+                  setFormError('');
+                }}
                 onSelectPlace={(place) => {
                   setLocationName(place.name);
                   setLat(String(place.lat));
                   setLng(String(place.lng));
+                  setFormError('');
                 }}
               />
             </CompactFormField>
@@ -478,6 +506,11 @@ export const WaypointsManager: React.FC<WaypointsManagerProps> = ({
               />
               {photoError && (
                 <p className="mt-1 text-[9px] font-semibold text-amber-700">{photoError}</p>
+              )}
+              {formError && (
+                <p className="mt-1 rounded-lg border border-amber-100 bg-amber-50 px-2.5 py-1.5 text-[10px] font-semibold text-amber-800">
+                  {formError}
+                </p>
               )}
             </div>
           </CompactFormSection>

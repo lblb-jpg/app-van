@@ -63,12 +63,12 @@ import { startGeolocationWatch, type GeoStatus } from './services/geolocation';
 import { toUserFacingError } from './lib/userFacingError';
 import {
   hydrateFriendAvatars,
-  pickDisplayAvatar,
-  readCrewCustomization,
   resolveFriendAvatar,
   writeCrewCustomization,
   type CrewCustomization,
 } from './lib/crewAvatars';
+import { normalizeBundleFriendIds } from './lib/legacyIds';
+import { normalizeExpensesForFriends } from './lib/expenseSplit';
 import {
   CREW_MEMBER_NAMES,
   ensureCrewSession,
@@ -231,16 +231,16 @@ export default function App() {
       if (!friend) return [];
       saveCrewUserId(name, friend.id);
       crewAccountNamesRef.current[friend.id] = name;
-      const customization = readCrewCustomization(crewCustomizationsRef.current, friend.id, name);
-      const displayName = customization?.name?.trim() || friend.name;
-      // Cloud photo wins — local customization must not hide the real profile photo.
+      // Cloud is authoritative for display name + avatar when connected.
       return [{
         ...friend,
-        name: displayName,
-        avatar: pickDisplayAvatar(friend.avatar, customization?.avatar, displayName, friend.color),
+        name: friend.name,
+        avatar: resolveFriendAvatar(friend.name, friend.color, friend.avatar),
       }];
     });
     const visibleFriends = crewFriends.length ? crewFriends : bundle.friends;
+    const remapped = normalizeBundleFriendIds(bundle, visibleFriends, getStoredCrewUserMap());
+    const normalizedExpenses = normalizeExpensesForFriends(remapped.expenses, visibleFriends);
     const selectedFriendId = visibleFriends.some(
       (friend) => friend.id === currentFriendIdRef.current
     )
@@ -248,15 +248,20 @@ export default function App() {
       : visibleFriends.find((friend) => friend.id === userId)?.id ?? visibleFriends[0]?.id ?? userId;
 
     setFriends(visibleFriends);
-    setPois(bundle.pois);
-    setJournal(bundle.journal);
-    setExpenses(bundle.expenses);
-    setPhotos(bundle.photos);
-    setWaypoints(bundle.waypoints);
-    setTracks(bundle.tracks);
+    setPois(remapped.pois);
+    setJournal(remapped.journal);
+    setExpenses(normalizedExpenses);
+    setPhotos(remapped.photos);
+    setWaypoints(remapped.waypoints);
+    setTracks(remapped.tracks);
     currentFriendIdRef.current = selectedFriendId;
     setCurrentFriendId(selectedFriendId);
-    void mirrorLocal({ ...bundle, friends: visibleFriends, currentFriendId: selectedFriendId });
+    void mirrorLocal({
+      ...remapped,
+      expenses: normalizedExpenses,
+      friends: visibleFriends,
+      currentFriendId: selectedFriendId,
+    });
   };
 
   const loadLocalCache = async () => {
@@ -326,6 +331,8 @@ export default function App() {
         });
       } catch (crewErr) {
         console.warn('Crew trip sync failed', crewErr);
+        setSyncError(toUserFacingError(crewErr, 'Impossible de rejoindre le voyage partagé.'));
+        throw crewErr;
       }
 
       cloudRef.current = ctx;
@@ -335,7 +342,10 @@ export default function App() {
         schemaCheckedRef.current = true;
         const schemaIssues = await verifyCloudSchema(ctx);
         if (schemaIssues.length) {
-          console.warn('Schéma Supabase incomplet (VanPay):', schemaIssues.join(', '));
+          console.warn('Schéma Supabase incomplet:', schemaIssues.join(', '));
+          setSyncError(
+            `Schéma cloud incomplet — lance ensure_full_sync.sql : ${schemaIssues.join(' · ')}`
+          );
         }
       }
 
@@ -381,29 +391,30 @@ export default function App() {
 
   useEffect(() => {
     async function init() {
-      // Force le voyage partagé sain (base reset ACF77E77).
-      const RESET_STAMP = 'crew_clean_acf77e77_v1';
+      // One-shot local wipe after shared crew invite migration — never clear every boot.
+      const RESET_STAMP = 'crew_clean_acf77e77_v2';
       const alreadyReset = localStorage.getItem('van_db_reset_stamp_v1') === RESET_STAMP;
       saveCrewInviteCode(SHARED_CREW_INVITE);
-      try {
-        localStorage.removeItem(CREW_CUSTOMIZATIONS_KEY);
-        localStorage.removeItem('van_current_trip_id_v1');
-        crewCustomizationsRef.current = {};
-      } catch {
-        // ignore
-      }
 
-      // Une fois après reset cloud : vide le cache local (évite de réinjecter d’anciennes données).
       if (!alreadyReset) {
+        try {
+          localStorage.removeItem(CREW_CUSTOMIZATIONS_KEY);
+          localStorage.removeItem('van_current_trip_id_v1');
+          crewCustomizationsRef.current = {};
+        } catch {
+          // ignore
+        }
         await dbService.clearAllLocalTripData();
         localStorage.setItem('van_db_reset_stamp_v1', RESET_STAMP);
+      } else {
+        crewCustomizationsRef.current = readCrewCustomizations();
       }
 
       await loadLocalCache();
       setBooting(false);
 
       if (isCloudConfigured()) {
-        void connectCloud({ migrateLocal: false }).then((ok) => {
+        void connectCloud({ migrateLocal: true }).then((ok) => {
           if (ok && cloudRef.current) {
             void migrateProfileAvatarsToStorage(cloudRef.current);
           }
@@ -419,9 +430,16 @@ export default function App() {
 
     let refreshTimer: number | undefined;
     let refreshing = false;
+    let pendingRefresh: { tracks?: boolean; showSpinner?: boolean } | null = null;
 
     const refreshTripBundle = async (opts?: { tracks?: boolean; showSpinner?: boolean }) => {
-      if (refreshing) return;
+      if (refreshing) {
+        pendingRefresh = {
+          tracks: Boolean(pendingRefresh?.tracks || opts?.tracks),
+          showSpinner: Boolean(pendingRefresh?.showSpinner || opts?.showSpinner),
+        };
+        return;
+      }
       refreshing = true;
       if (opts?.showSpinner) setCloudSyncing(true);
       try {
@@ -432,6 +450,11 @@ export default function App() {
       } finally {
         refreshing = false;
         if (opts?.showSpinner) setCloudSyncing(false);
+        if (pendingRefresh) {
+          const next = pendingRefresh;
+          pendingRefresh = null;
+          void refreshTripBundle(next);
+        }
       }
     };
 
@@ -668,7 +691,7 @@ export default function App() {
   const handleManualRefresh = () => {
     const ctx = cloudRef.current;
     if (!ctx) {
-      void connectCloud({ migrateLocal: false });
+      void connectCloud({ migrateLocal: true });
       return;
     }
     setCloudSyncing(true);
@@ -705,25 +728,18 @@ export default function App() {
     if (!friend) return;
 
     const crewName = crewAccountNamesRef.current[friendId] as CrewMemberName | undefined;
-    crewCustomizationsRef.current = writeCrewCustomization(
-      crewCustomizationsRef.current,
-      friendId,
-      crewName,
-      patch
-    );
-    localStorage.setItem(CREW_CUSTOMIZATIONS_KEY, JSON.stringify(crewCustomizationsRef.current));
-
-    const updatedFriends = friends.map((candidate) =>
-      candidate.id === friendId
-        ? { ...candidate, name: patch.name, avatar: patch.avatar }
-        : candidate
-    );
-    setFriends(updatedFriends);
-    await dbService.saveFriends(updatedFriends);
-
     const ctx = cloudRef.current;
-    if (ctx && ctx.user.id === friendId) {
+
+    if (isCloudConfigured()) {
+      if (!ctx) {
+        throw new Error('Connexion cloud requise pour enregistrer le profil.');
+      }
+      if (ctx.user.id !== friendId) {
+        throw new Error('Bascule sur ce profil pour modifier ses informations.');
+      }
+
       setSavingProfile(true);
+      setSyncError('');
       try {
         const savedAvatar = await updateOwnProfile(ctx, {
           name: patch.name,
@@ -735,32 +751,53 @@ export default function App() {
           finalAvatar && (finalAvatar.startsWith('http://') || finalAvatar.startsWith('https://'))
             ? finalAvatar
             : '';
-        await ctx.supabase.auth.updateUser({
+        const { error: metaError } = await ctx.supabase.auth.updateUser({
           data: { name: patch.name, avatar_url: metaAvatar },
         });
-        if (finalAvatar !== patch.avatar) {
-          const synced = friends.map((candidate) =>
-            candidate.id === friendId
-              ? { ...candidate, name: patch.name, avatar: finalAvatar }
-              : candidate
-          );
-          setFriends(synced);
-          await dbService.saveFriends(synced);
-          crewCustomizationsRef.current = writeCrewCustomization(
-            crewCustomizationsRef.current,
-            friendId,
-            crewName,
-            { name: patch.name, avatar: finalAvatar }
-          );
-          localStorage.setItem(
-            CREW_CUSTOMIZATIONS_KEY,
-            JSON.stringify(crewCustomizationsRef.current)
-          );
-        }
+        if (metaError) throw metaError;
+
+        const synced = friends.map((candidate) =>
+          candidate.id === friendId
+            ? { ...candidate, name: patch.name, avatar: finalAvatar }
+            : candidate
+        );
+        setFriends(synced);
+        await dbService.saveFriends(synced);
+
+        // Local mirror only — cloud remains source of truth after refresh.
+        crewCustomizationsRef.current = writeCrewCustomization(
+          crewCustomizationsRef.current,
+          friendId,
+          crewName,
+          { name: patch.name, avatar: finalAvatar }
+        );
+        localStorage.setItem(CREW_CUSTOMIZATIONS_KEY, JSON.stringify(crewCustomizationsRef.current));
+
+        await refreshFromCloud(ctx, { includeTrackPoints: false });
+      } catch (err) {
+        setSyncError(toUserFacingError(err, 'Impossible d’enregistrer le profil.'));
+        throw err instanceof Error ? err : new Error('Impossible d’enregistrer le profil.');
       } finally {
         setSavingProfile(false);
       }
+      return;
     }
+
+    // Offline / unconfigured: device-local only.
+    crewCustomizationsRef.current = writeCrewCustomization(
+      crewCustomizationsRef.current,
+      friendId,
+      crewName,
+      patch
+    );
+    localStorage.setItem(CREW_CUSTOMIZATIONS_KEY, JSON.stringify(crewCustomizationsRef.current));
+    const updatedFriends = friends.map((candidate) =>
+      candidate.id === friendId
+        ? { ...candidate, name: patch.name, avatar: patch.avatar }
+        : candidate
+    );
+    setFriends(updatedFriends);
+    await dbService.saveFriends(updatedFriends);
   };
 
   const profileFriend = friends.find((friend) => friend.id === currentFriendId) || friends[0];
@@ -822,7 +859,12 @@ export default function App() {
 
   const handleAddPoi = async (newPoiData: Omit<Poi, 'id' | 'createdAt'>) => {
     const ctx = cloudRef.current;
-    if (ctx) {
+    if (isCloudConfigured()) {
+      if (!ctx) {
+        const msg = 'Connexion cloud requise pour ajouter un spot.';
+        setSyncError(msg);
+        throw new Error(msg);
+      }
       try {
         const saved = await cloudInsertPoi(ctx, newPoiData);
         const updated = [saved, ...pois];
@@ -830,7 +872,9 @@ export default function App() {
         await dbService.savePois(updated);
         return;
       } catch (err: any) {
-        setSyncError(toUserFacingError(err, 'Impossible d’ajouter ce spot.'));
+        const msg = toUserFacingError(err, 'Impossible d’ajouter ce spot.');
+        setSyncError(msg);
+        throw new Error(msg);
       }
     }
     const newPoi: Poi = {
@@ -845,7 +889,12 @@ export default function App() {
 
   const handleAddJournalNote = async (newNoteData: Omit<JournalNote, 'id'>) => {
     const ctx = cloudRef.current;
-    if (ctx) {
+    if (isCloudConfigured()) {
+      if (!ctx) {
+        const msg = 'Connexion cloud requise pour enregistrer la note.';
+        setSyncError(msg);
+        throw new Error(msg);
+      }
       try {
         const saved = await cloudInsertJournalNote(ctx, newNoteData);
         const updated = [saved, ...journal];
@@ -853,7 +902,9 @@ export default function App() {
         await dbService.saveJournal(updated);
         return;
       } catch (err: any) {
-        setSyncError(toUserFacingError(err, 'Impossible d’enregistrer la note.'));
+        const msg = toUserFacingError(err, 'Impossible d’enregistrer la note.');
+        setSyncError(msg);
+        throw new Error(msg);
       }
     }
     const newNote: JournalNote = { ...newNoteData, id: 'note_' + Date.now() };
@@ -865,7 +916,14 @@ export default function App() {
   const handleAddPhoto = async (newPhotoData: Omit<TripPhoto, 'id'>) => {
     const ctx = cloudRef.current;
     const isVideo = newPhotoData.mediaType === 'video';
-    if (ctx) {
+    if (isCloudConfigured()) {
+      if (!ctx) {
+        const msg = isVideo
+          ? 'Connexion cloud requise pour ajouter la vidéo.'
+          : 'Connexion cloud requise pour ajouter la photo.';
+        setSyncError(msg);
+        throw new Error(msg);
+      }
       try {
         const saved = await cloudInsertPhoto(ctx, newPhotoData);
         const updated = [saved, ...photos];
@@ -873,9 +931,12 @@ export default function App() {
         await dbService.savePhotos(updated);
         return;
       } catch (err: any) {
-        setSyncError(
-          toUserFacingError(err, isVideo ? 'Impossible d’ajouter la vidéo.' : 'Impossible d’ajouter la photo.')
+        const msg = toUserFacingError(
+          err,
+          isVideo ? 'Impossible d’ajouter la vidéo.' : 'Impossible d’ajouter la photo.'
         );
+        setSyncError(msg);
+        throw new Error(msg);
       }
     }
     const newPhoto: TripPhoto = { ...newPhotoData, id: 'photo_' + Date.now() };
@@ -886,12 +947,18 @@ export default function App() {
 
   const handleDeletePhoto = async (id: string) => {
     const ctx = cloudRef.current;
-    if (ctx) {
+    if (isCloudConfigured()) {
+      if (!ctx) {
+        const msg = 'Connexion cloud requise pour supprimer la photo.';
+        setSyncError(msg);
+        throw new Error(msg);
+      }
       try {
         await cloudDeletePhoto(ctx, id);
       } catch (err: any) {
-        setSyncError(toUserFacingError(err, 'Impossible de supprimer la photo.'));
-        return;
+        const msg = toUserFacingError(err, 'Impossible de supprimer la photo.');
+        setSyncError(msg);
+        throw new Error(msg);
       }
     }
     const updated = photos.filter((photo) => photo.id !== id);
@@ -901,65 +968,105 @@ export default function App() {
 
   const handleAddExpense = async (newExpData: Omit<Expense, 'id'>) => {
     const ctx = cloudRef.current;
-    if (ctx) {
+    if (isCloudConfigured()) {
+      if (!ctx) {
+        const msg = 'Connexion cloud requise pour ajouter la dépense.';
+        setSyncError(msg);
+        throw new Error(msg);
+      }
       try {
         const saved = await cloudInsertExpense(ctx, newExpData);
-        const updated = [saved, ...expenses];
-        setExpenses(updated);
-        await dbService.saveExpenses(updated);
+        setExpenses((prev) => {
+          const next = [saved, ...prev.filter((expense) => expense.id !== saved.id)];
+          void dbService.saveExpenses(next);
+          return next;
+        });
         return;
       } catch (err: any) {
-        setSyncError(toUserFacingError(err, 'Impossible d’ajouter la dépense.'));
+        const msg = toUserFacingError(err, 'Impossible d’ajouter la dépense.');
+        setSyncError(msg);
+        throw new Error(msg);
       }
     }
     const newExp: Expense = { ...newExpData, id: 'exp_' + Date.now() };
-    const updated = [newExp, ...expenses];
-    setExpenses(updated);
-    await dbService.saveExpenses(updated);
+    setExpenses((prev) => {
+      const next = [newExp, ...prev];
+      void dbService.saveExpenses(next);
+      return next;
+    });
   };
 
   const handleUpdateExpense = async (id: string, data: Omit<Expense, 'id'>) => {
     const ctx = cloudRef.current;
-    if (ctx && !id.startsWith('exp_')) {
+    if (isCloudConfigured()) {
+      if (!ctx) {
+        const msg = 'Connexion cloud requise pour modifier la dépense.';
+        setSyncError(msg);
+        throw new Error(msg);
+      }
+      if (id.startsWith('exp_')) {
+        const msg = 'Cette dépense locale n’est pas encore synchronisée.';
+        setSyncError(msg);
+        throw new Error(msg);
+      }
       try {
         const saved = await cloudUpdateExpense(ctx, id, data);
-        const updated = expenses.map((expense) => (expense.id === id ? saved : expense));
-        setExpenses(updated);
-        await dbService.saveExpenses(updated);
+        setExpenses((prev) => {
+          const next = prev.map((expense) => (expense.id === id ? saved : expense));
+          void dbService.saveExpenses(next);
+          return next;
+        });
         return;
       } catch (err: any) {
-        setSyncError(toUserFacingError(err, 'Impossible de modifier la dépense.'));
-        return;
+        const msg = toUserFacingError(err, 'Impossible de modifier la dépense.');
+        setSyncError(msg);
+        throw new Error(msg);
       }
     }
-    const updated = expenses.map((expense) => (expense.id === id ? { ...data, id } : expense));
-    setExpenses(updated);
-    await dbService.saveExpenses(updated);
+    setExpenses((prev) => {
+      const next = prev.map((expense) => (expense.id === id ? { ...data, id } : expense));
+      void dbService.saveExpenses(next);
+      return next;
+    });
   };
 
   const handleDeleteExpense = async (id: string) => {
     const ctx = cloudRef.current;
-    if (ctx) {
+    if (isCloudConfigured()) {
+      if (!ctx) {
+        const msg = 'Connexion cloud requise pour supprimer la dépense.';
+        setSyncError(msg);
+        throw new Error(msg);
+      }
       try {
         await cloudDeleteExpense(ctx, id);
       } catch (err: any) {
-        setSyncError(toUserFacingError(err, 'Impossible de supprimer la dépense.'));
-        return;
+        const msg = toUserFacingError(err, 'Impossible de supprimer la dépense.');
+        setSyncError(msg);
+        throw new Error(msg);
       }
     }
-    const updated = expenses.filter((e) => e.id !== id);
-    setExpenses(updated);
-    await dbService.saveExpenses(updated);
+    setExpenses((prev) => {
+      const next = prev.filter((e) => e.id !== id);
+      void dbService.saveExpenses(next);
+      return next;
+    });
   };
 
   const handleClearAllExpenses = async () => {
     const ctx = cloudRef.current;
-    if (ctx) {
+    if (isCloudConfigured()) {
+      if (!ctx) {
+        const msg = 'Connexion cloud requise pour réinitialiser les dépenses.';
+        setSyncError(msg);
+        throw new Error(msg);
+      }
       try {
         await cloudDeleteAllExpenses(ctx);
       } catch (err: any) {
-        setSyncError(toUserFacingError(err, 'Impossible de réinitialiser les dépenses.'));
-        return;
+        const msg = toUserFacingError(err, 'Impossible de réinitialiser les dépenses.');
+        setSyncError(msg);
+        throw new Error(msg);
       }
     }
     setExpenses([]);
@@ -968,7 +1075,12 @@ export default function App() {
 
   const handleAddWaypoint = async (newWpData: Omit<Waypoint, 'id'>) => {
     const ctx = cloudRef.current;
-    if (ctx) {
+    if (isCloudConfigured()) {
+      if (!ctx) {
+        const msg = 'Connexion cloud requise pour ajouter l’étape.';
+        setSyncError(msg);
+        throw new Error(msg);
+      }
       try {
         const saved = await cloudInsertWaypoint(ctx, newWpData);
         const updated = [...waypoints, saved];
@@ -976,7 +1088,9 @@ export default function App() {
         await dbService.saveWaypoints(updated);
         return;
       } catch (err: any) {
-        setSyncError(toUserFacingError(err, 'Impossible d’ajouter l’étape.'));
+        const msg = toUserFacingError(err, 'Impossible d’ajouter l’étape.');
+        setSyncError(msg);
+        throw new Error(msg);
       }
     }
     const newWp: Waypoint = { ...newWpData, id: 'wp_' + Date.now() };
@@ -986,20 +1100,32 @@ export default function App() {
   };
 
   const handleUpdateWaypointStatus = async (id: string, status: 'done' | 'active' | 'upcoming') => {
+    const previous = waypoints;
     const updated = waypoints.map((w) => (w.id === id ? { ...w, status } : w));
     setWaypoints(updated);
     await dbService.saveWaypoints(updated);
     const ctx = cloudRef.current;
-    if (ctx) {
+    if (isCloudConfigured()) {
+      if (!ctx) {
+        setWaypoints(previous);
+        await dbService.saveWaypoints(previous);
+        setSyncError('Connexion cloud requise pour mettre à jour l’étape.');
+        return;
+      }
       try {
         await cloudUpdateWaypointStatus(ctx, id, status);
       } catch (err: any) {
-        setSyncError(toUserFacingError(err, 'Impossible de mettre à jour l’étape.'));
+        setWaypoints(previous);
+        await dbService.saveWaypoints(previous);
+        const msg = toUserFacingError(err, 'Impossible de mettre à jour l’étape.');
+        setSyncError(msg);
+        throw new Error(msg);
       }
     }
   };
 
   const handleReorderWaypoint = async (id: string, direction: 'up' | 'down') => {
+    const previous = waypoints;
     const sorted = [...waypoints].sort((a, b) => a.order - b.order);
     const idx = sorted.findIndex((w) => w.id === id);
     if (idx < 0) return;
@@ -1008,30 +1134,47 @@ export default function App() {
     if (targetIdx < 0 || targetIdx >= sorted.length) return;
 
     const temp = sorted[idx].order;
-    sorted[idx].order = sorted[targetIdx].order;
-    sorted[targetIdx].order = temp;
+    sorted[idx] = { ...sorted[idx], order: sorted[targetIdx].order };
+    sorted[targetIdx] = { ...sorted[targetIdx], order: temp };
 
     setWaypoints(sorted);
     await dbService.saveWaypoints(sorted);
 
     const ctx = cloudRef.current;
-    if (ctx) {
+    if (isCloudConfigured()) {
+      if (!ctx) {
+        setWaypoints(previous);
+        await dbService.saveWaypoints(previous);
+        const msg = 'Connexion cloud requise pour réordonner les étapes.';
+        setSyncError(msg);
+        throw new Error(msg);
+      }
       try {
         await cloudReorderWaypoint(ctx, sorted);
       } catch (err: any) {
-        setSyncError(toUserFacingError(err, 'Impossible de réordonner les étapes.'));
+        setWaypoints(previous);
+        await dbService.saveWaypoints(previous);
+        const msg = toUserFacingError(err, 'Impossible de réordonner les étapes.');
+        setSyncError(msg);
+        throw new Error(msg);
       }
     }
   };
 
   const handleDeleteWaypoint = async (id: string) => {
     const ctx = cloudRef.current;
-    if (ctx) {
+    if (isCloudConfigured()) {
+      if (!ctx) {
+        const msg = 'Connexion cloud requise pour supprimer l’étape.';
+        setSyncError(msg);
+        throw new Error(msg);
+      }
       try {
         await cloudDeleteWaypoint(ctx, id);
       } catch (err: any) {
-        setSyncError(toUserFacingError(err, 'Impossible de supprimer l’étape.'));
-        return;
+        const msg = toUserFacingError(err, 'Impossible de supprimer l’étape.');
+        setSyncError(msg);
+        throw new Error(msg);
       }
     }
     const updated = waypoints.filter((w) => w.id !== id);
@@ -1096,7 +1239,6 @@ export default function App() {
                 focusLocation={mapFocus}
                 mapVisible={activeTab === 'map'}
                 onAddPoi={handleAddPoi}
-                onAddPhoto={handleAddPhoto}
               />
             </Suspense>
           </div>
@@ -1106,22 +1248,24 @@ export default function App() {
           <VanSleepSearch
             onSelectOnMap={handleSelectOnMap}
             onSpotsChange={setSleepSearchSpots}
-            onSaveSpot={(spot) => void handleAddWaypoint({
-              order: waypoints.length + 1,
-              title: spot.name,
-              locationName: spot.address || `${spot.distanceKm} km de la ville recherchée`,
-              lat: spot.lat,
-              lng: spot.lng,
-              status: 'upcoming',
-              vanSpotType: spot.label,
-              notes: spot.confidence === 'official' ? 'Lieu officiel' : 'Autorisation à vérifier',
-              amenities: spot.amenities.map((amenity) =>
-                amenity === 'Eau potable' ? 'eau'
-                  : amenity === 'Toilettes' ? 'wc'
-                    : amenity === 'Douches' ? 'douche'
-                      : amenity.toLowerCase()
-              ),
-            })}
+            onSaveSpot={(spot) =>
+              handleAddWaypoint({
+                order: waypoints.length + 1,
+                title: spot.name,
+                locationName: spot.address || `${spot.distanceKm} km de la ville recherchée`,
+                lat: spot.lat,
+                lng: spot.lng,
+                status: 'upcoming',
+                vanSpotType: spot.label,
+                notes: spot.confidence === 'official' ? 'Lieu officiel' : 'Autorisation à vérifier',
+                amenities: spot.amenities.map((amenity) =>
+                  amenity === 'Eau potable' ? 'eau'
+                    : amenity === 'Toilettes' ? 'wc'
+                      : amenity === 'Douches' ? 'douche'
+                        : amenity.toLowerCase()
+                ),
+              })
+            }
           />
         )}
 
@@ -1179,7 +1323,7 @@ export default function App() {
         isOpen={isAuthModalOpen}
         allowDismiss
         onClose={() => setIsAuthModalOpen(false)}
-        onAuthenticated={() => void connectCloud({ migrateLocal: false })}
+        onAuthenticated={() => void connectCloud({ migrateLocal: true })}
       />
     </div>
   );

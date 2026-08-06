@@ -25,6 +25,7 @@ export function ProfileSettings({
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState('');
   const [uploadError, setUploadError] = useState('');
+  const [saveError, setSaveError] = useState('');
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -32,6 +33,7 @@ export function ProfileSettings({
     setName(friend.name);
     setAvatar(friend.avatar);
     setUploadError('');
+    setSaveError('');
     setSaved(false);
   }, [friend?.id, friend?.name, friend?.avatar]);
 
@@ -61,11 +63,16 @@ export function ProfileSettings({
     event.preventDefault();
     if (!canSave) return;
     setSaved(false);
+    setSaveError('');
     try {
       await onSave({ name: name.trim(), avatar });
       setSaved(true);
-    } catch {
-      // Parent surfaces sync errors.
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : 'Impossible d’enregistrer le profil.';
+      setSaveError(message);
     }
   };
 
@@ -113,6 +120,7 @@ export function ProfileSettings({
         </div>
 
         {uploadError && <p className="profile-page__error">{uploadError}</p>}
+        {saveError && <p className="profile-page__error">{saveError}</p>}
 
         <label className="profile-page__field">
           <span>Prénom affiché</span>

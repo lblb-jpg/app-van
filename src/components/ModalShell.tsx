@@ -39,11 +39,11 @@ export function ModalShell({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center overscroll-none bg-[#17352b]/40 p-4 backdrop-blur-sm pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]"
+      className="fixed inset-0 z-[200] flex items-center justify-center overscroll-none bg-[#17352b]/40 p-3 backdrop-blur-sm pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,calc(env(safe-area-inset-bottom)+0.25rem))]"
       onClick={onClose}
     >
       <div
-        className={`flex w-full ${maxW} max-h-[min(88dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-2rem))] flex-col overflow-hidden rounded-[1.5rem] border border-[#17352b]/10 bg-[#fffdf8] shadow-[0_24px_60px_rgba(23,53,43,0.18)] animate-in fade-in zoom-in-95 duration-200 sm:rounded-[1.75rem] ${sheetClassName}`}
+        className={`flex w-full ${maxW} max-h-[min(88dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-1.5rem))] flex-col overflow-hidden rounded-[1.35rem] border border-[#17352b]/10 bg-[#fffdf8] shadow-[0_24px_60px_rgba(23,53,43,0.18)] animate-in fade-in zoom-in-95 duration-200 sm:rounded-[1.75rem] ${sheetClassName}`}
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"

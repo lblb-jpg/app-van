@@ -1,23 +1,24 @@
 import { Expense, Friend, SplitDetail, SplitType } from '../types';
-
-const LEGACY_CREW_IDS: Record<string, string> = {
-  adel: 'adel',
-  paul: 'paul',
-  yanis: 'yanis',
-};
+import { CREW_MEMBER_NAMES, getStoredCrewUserMap } from '../services/supabase';
+import { buildLegacyIdMap, remapFriendId } from './legacyIds';
 
 export function buildFriendIdResolver(friends: Friend[]) {
   const byId = new Set(friends.map((friend) => friend.id));
   const byName = new Map(friends.map((friend) => [friend.name.trim().toLowerCase(), friend.id]));
+  const legacyMap = buildLegacyIdMap(friends, getStoredCrewUserMap());
 
   return (rawId: string | undefined): string | undefined => {
     if (!rawId) return undefined;
     if (byId.has(rawId)) return rawId;
 
-    const legacyKey = LEGACY_CREW_IDS[rawId.toLowerCase()];
-    if (legacyKey) {
-      const fromLegacy = byName.get(legacyKey);
-      if (fromLegacy) return fromLegacy;
+    const fromLegacy = remapFriendId(rawId, legacyMap, byId);
+    if (fromLegacy && byId.has(fromLegacy)) return fromLegacy;
+
+    for (const name of CREW_MEMBER_NAMES) {
+      if (name.toLowerCase() === rawId.trim().toLowerCase()) {
+        const mapped = getStoredCrewUserMap()[name];
+        if (mapped && byId.has(mapped)) return mapped;
+      }
     }
 
     const fromName = byName.get(rawId.trim().toLowerCase());
@@ -33,12 +34,13 @@ export function normalizeExpenseForFriends(expense: Expense, friends: Friend[]):
   const paidBy =
     resolve(expense.paidByFriendId) ??
     (friendIds.includes(expense.paidByFriendId) ? expense.paidByFriendId : undefined) ??
-    friendIds[0] ??
     expense.paidByFriendId;
 
-  const participantSource = expense.splitAmongFriendIds?.length
+  // Never invent "all crew" when splits are missing — keep empty and skip in balances.
+  const hadExplicitParticipants = Boolean(expense.splitAmongFriendIds?.length);
+  const participantSource = hadExplicitParticipants
     ? expense.splitAmongFriendIds
-    : friendIds;
+    : [];
 
   const splitAmongFriendIds = participantSource
     .map((id) => resolve(id))
@@ -55,7 +57,7 @@ export function normalizeExpenseForFriends(expense: Expense, friends: Friend[]):
   return {
     ...expense,
     paidByFriendId: paidBy,
-    splitAmongFriendIds: splitAmongFriendIds.length ? splitAmongFriendIds : friendIds,
+    splitAmongFriendIds,
     splitDetails,
   };
 }
@@ -129,8 +131,8 @@ export function distributeEqual(total: number, ids: string[]): Record<string, nu
   return distributeWithWeights(total, ids, () => 1);
 }
 
-export function getParticipants(expense: Pick<Expense, 'splitAmongFriendIds'>, allFriendIds: string[]) {
-  return expense.splitAmongFriendIds?.length ? expense.splitAmongFriendIds : allFriendIds;
+export function getParticipants(expense: Pick<Expense, 'splitAmongFriendIds'>, _allFriendIds: string[]) {
+  return expense.splitAmongFriendIds?.length ? expense.splitAmongFriendIds : [];
 }
 
 export function getParticipantAmounts(

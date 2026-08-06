@@ -124,37 +124,71 @@ export function getSupabaseClient(): SupabaseClient | null {
   return client;
 }
 
+/**
+ * Ensures a profiles row exists for the auth user.
+ * Never overwrites a personalized name / avatar / color already stored in the cloud.
+ */
 async function upsertProfileName(supabase: SupabaseClient, userId: string, name: string) {
   const crewName = isCrewMemberName(name) ? name : undefined;
-  const color = crewName ? CREW_DEFAULT_COLORS[crewName] : '#059669';
-  const { data: existing } = await supabase
+  const defaultColor = crewName ? CREW_DEFAULT_COLORS[crewName] : '#059669';
+  const { data: existing, error: selectError } = await supabase
     .from('profiles')
-    .select('avatar_url')
+    .select('name, avatar_url, color')
     .eq('id', userId)
     .maybeSingle();
+  if (selectError) throw selectError;
 
-  // Keep a real cloud photo if present; never invent a huge data: URL for auth metadata.
-  const existingAvatar = existing?.avatar_url || '';
-  const avatarUrl = existingAvatar.startsWith('http')
-    ? existingAvatar
-    : resolveFriendAvatar(name, color, existingAvatar || null);
-
-  const { error } = await supabase.from('profiles').upsert(
-    {
+  if (!existing) {
+    const avatarUrl = resolveFriendAvatar(name, defaultColor, null);
+    const { error } = await supabase.from('profiles').insert({
       id: userId,
       name,
-      color,
+      color: defaultColor,
       avatar_url: avatarUrl,
-    },
-    { onConflict: 'id' }
-  );
-  if (error) {
-    await supabase.from('profiles').update({ name, color, avatar_url: avatarUrl }).eq('id', userId);
+    });
+    if (error) {
+      // Race: another session may have created the row — continue to fill empties.
+      console.warn('Profile insert raced', error.message);
+    } else {
+      const metaAvatar =
+        avatarUrl.startsWith('http://') || avatarUrl.startsWith('https://') ? avatarUrl : '';
+      const { error: metaError } = await supabase.auth.updateUser({
+        data: { name, avatar_url: metaAvatar },
+      });
+      if (metaError) throw metaError;
+      return;
+    }
   }
-  // JWT must stay small — only short https URLs (or empty).
+
+  const row = existing ?? (
+    await supabase.from('profiles').select('name, avatar_url, color').eq('id', userId).maybeSingle()
+  ).data;
+
+  if (!row) {
+    throw new Error('Profil cloud introuvable après connexion.');
+  }
+
+  const patch: { name?: string; color?: string; avatar_url?: string } = {};
+  if (!row.name?.trim()) patch.name = name;
+  if (!row.color?.trim()) patch.color = defaultColor;
+  if (!row.avatar_url?.trim()) {
+    patch.avatar_url = resolveFriendAvatar(row.name || name, row.color || defaultColor, null);
+  }
+
+  if (Object.keys(patch).length) {
+    const { error } = await supabase.from('profiles').update(patch).eq('id', userId);
+    if (error) throw error;
+  }
+
+  // JWT must stay small — only short https URLs (or empty). Preserve cloud display name.
+  const finalName = (row.name?.trim() || patch.name || name).trim();
+  const finalAvatar = row.avatar_url || patch.avatar_url || '';
   const metaAvatar =
-    avatarUrl.startsWith('http://') || avatarUrl.startsWith('https://') ? avatarUrl : '';
-  await supabase.auth.updateUser({ data: { name, avatar_url: metaAvatar } });
+    finalAvatar.startsWith('http://') || finalAvatar.startsWith('https://') ? finalAvatar : '';
+  const { error: metaError } = await supabase.auth.updateUser({
+    data: { name: finalName, avatar_url: metaAvatar },
+  });
+  if (metaError) throw metaError;
 }
 
 /**

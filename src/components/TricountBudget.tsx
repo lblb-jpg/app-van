@@ -28,7 +28,6 @@ import { ModalShell } from './ModalShell';
 import {
   buildSplitDetails,
   computeBalances,
-  CURRENCIES,
   currencySymbol,
   formatMoney,
   getParticipantAmounts,
@@ -43,9 +42,9 @@ interface TricountBudgetProps {
   expenses: Expense[];
   friends: Friend[];
   authorId: string;
-  onAddExpense: (newExpense: Omit<Expense, 'id'>) => void;
-  onUpdateExpense: (id: string, data: Omit<Expense, 'id'>) => void;
-  onDeleteExpense: (id: string) => void;
+  onAddExpense: (newExpense: Omit<Expense, 'id'>) => void | Promise<void>;
+  onUpdateExpense: (id: string, data: Omit<Expense, 'id'>) => void | Promise<void>;
+  onDeleteExpense: (id: string) => void | Promise<void>;
   onClearAllExpenses: () => void | Promise<void>;
 }
 
@@ -150,11 +149,12 @@ function getPersonExpenseLines(friendId: string, expenses: Expense[], friendIds:
   return expenses
     .flatMap((expense) => {
       const participants = getParticipants(expense, friendIds);
-      if (!participants.includes(friendId)) return [];
+      const isPayer = expense.paidByFriendId === friendId;
+      if (!participants.includes(friendId) && !isPayer) return [];
       const amounts = getParticipantAmounts(expense, friendIds);
       return [{
         expense,
-        isPayer: expense.paidByFriendId === friendId,
+        isPayer,
         personAmount: amounts[friendId] ?? 0,
       }];
     })
@@ -201,6 +201,9 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
   const [customAmounts, setCustomAmounts] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState('');
   const [formError, setFormError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [settling, setSettling] = useState(false);
+  const [actionError, setActionError] = useState('');
 
   const friendIds = useMemo(() => friends.map((f) => f.id), [friends]);
   const normalizedExpenses = useMemo(
@@ -393,7 +396,7 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
 
   const hasAnyExpenses = regularExpenses.length + settlementExpenses.length > 0;
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
 
@@ -429,18 +432,24 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
       splitAmongFriendIds: splitWith,
       splitType,
       splitDetails: buildSplitDetails(splitType, splitWith, parsedAmount, shareCounts, customAmounts),
-      currency,
+      currency: 'EUR',
       notes: notes.trim() || undefined,
     };
 
-    if (editingExpense) {
-      onUpdateExpense(editingExpense.id, payload);
-    } else {
-      onAddExpense(payload);
+    setSaving(true);
+    try {
+      if (editingExpense) {
+        await onUpdateExpense(editingExpense.id, payload);
+      } else {
+        await onAddExpense(payload);
+      }
+      setShowFormModal(false);
+      resetForm();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Impossible d’enregistrer la dépense.');
+    } finally {
+      setSaving(false);
     }
-
-    setShowFormModal(false);
-    resetForm();
   };
 
   const canSubmitExpense =
@@ -463,10 +472,11 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
     }
   };
 
-  const markSettlementPaid = (settlement: DebtSettlement, celebrate = true) => {
+  const markSettlementPaid = async (settlement: DebtSettlement, celebrate = true) => {
     const debtor = friends.find((friend) => friend.id === settlement.fromFriendId);
     const creditor = friends.find((friend) => friend.id === settlement.toFriendId);
-    onAddExpense({
+    setActionError('');
+    await onAddExpense({
       description: `${SETTLEMENT_PREFIX} ${debtor?.name || 'Équipier'} → ${creditor?.name || 'Équipier'}`,
       amount: settlement.amount,
       category: 'autre',
@@ -480,9 +490,20 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
     if (celebrate) confetti({ particleCount: 55, spread: 55, origin: { y: 0.7 } });
   };
 
-  const handleSettleUpConfetti = () => {
-    settlements.forEach((settlement) => markSettlementPaid(settlement, false));
-    confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+  const handleSettleUpConfetti = async () => {
+    if (settling || !settlements.length) return;
+    setSettling(true);
+    setActionError('');
+    try {
+      for (const settlement of settlements) {
+        await markSettlementPaid(settlement, false);
+      }
+      confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Impossible d’enregistrer le règlement.');
+    } finally {
+      setSettling(false);
+    }
   };
 
   const handleSplitTypeChange = (next: SplitType) => {
@@ -575,7 +596,11 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
           <button
             key={tab.id}
             type="button"
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => {
+              setActiveTab(tab.id);
+              setActionError('');
+              setFormError('');
+            }}
             className={`flex flex-1 items-center justify-center gap-1 rounded-xl py-2.5 text-[10px] font-extrabold transition-all sm:gap-1.5 sm:text-[11px] ${
               activeTab === tab.id
                 ? 'bg-white text-zinc-900 shadow-xs'
@@ -589,15 +614,12 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
       </div>
 
       {activeTab === 'expenses' && (
-        <div className="bg-white border border-zinc-200 rounded-[1.75rem] p-8 text-center shadow-xs sm:rounded-[2rem] space-y-3">
-          <p className="text-xs font-medium text-zinc-400">
-            L’historique des dépenses est désactivé pour le moment.
-          </p>
-          <div className="flex flex-col items-center gap-2 sm:flex-row sm:justify-center">
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={openAddModal}
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-2xl bg-zinc-900 px-4 py-2.5 text-xs font-bold text-white"
+              className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-2xl bg-zinc-900 px-4 py-2.5 text-xs font-bold text-white sm:flex-none"
             >
               <Plus className="w-4 h-4 text-emerald-400" /> Ajouter une dépense
             </button>
@@ -609,15 +631,66 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
                 className="inline-flex min-h-11 items-center gap-1.5 rounded-2xl border border-red-200 bg-red-50 px-4 py-2.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50"
               >
                 <Trash2 className="w-4 h-4" />
-                Supprimer toutes les dépenses
+                Tout supprimer
               </button>
             )}
           </div>
+
+          {normalizedExpenses.length === 0 ? (
+            <div className="rounded-[1.75rem] border border-zinc-200 bg-white p-8 text-center shadow-xs sm:rounded-[2rem]">
+              <p className="text-xs font-medium text-zinc-400">
+                Aucune dépense pour l’instant. Ajoute la première pour lancer VanPay.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {[...normalizedExpenses]
+                .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id))
+                .map((expense) => {
+                  const settlement = isSettlementExpense(expense);
+                  const payer = friendById[expense.paidByFriendId];
+                  return (
+                    <button
+                      key={expense.id}
+                      type="button"
+                      onClick={() => setDetailExpense(expense)}
+                      className={`flex w-full items-center gap-3 rounded-[1.35rem] border px-3.5 py-3 text-left shadow-xs transition-colors ${
+                        settlement
+                          ? 'border-emerald-100 bg-emerald-50/70'
+                          : 'border-zinc-200 bg-white hover:bg-zinc-50'
+                      }`}
+                    >
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-base ring-1 ring-zinc-200">
+                        {settlement ? '🤝' : getCategoryIcon(expense.category)}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[12px] font-extrabold text-zinc-900">
+                          {expenseDescription(expense)}
+                        </p>
+                        <p className="mt-0.5 truncate text-[10px] font-medium text-zinc-500">
+                          {expense.date}
+                          {payer ? ` · ${payer.name}` : ''}
+                          {settlement ? ' · règlement' : ''}
+                        </p>
+                      </div>
+                      <span className="shrink-0 text-sm font-black font-mono tabular-nums text-zinc-900">
+                        {formatMoney(expense.amount, expense.currency ?? 'EUR')}
+                      </span>
+                    </button>
+                  );
+                })}
+            </div>
+          )}
         </div>
       )}
 
       {activeTab === 'balances' && (
         <>
+          {actionError && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] font-semibold text-amber-900">
+              {actionError}
+            </div>
+          )}
           <div className="bg-white border border-zinc-200 rounded-[1.75rem] p-4 shadow-xs space-y-3 sm:rounded-[2rem] sm:p-5">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <h3 className="min-w-0 font-extrabold text-sm text-zinc-900 flex items-start gap-2 leading-snug">
@@ -627,10 +700,11 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
               {settlements.length > 0 && (
                 <button
                   type="button"
-                  onClick={handleSettleUpConfetti}
-                  className="self-start shrink-0 touch-chip text-[10px] font-extrabold px-3 py-2 rounded-full bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200 hover:bg-emerald-100 transition-colors"
+                  disabled={settling}
+                  onClick={() => void handleSettleUpConfetti()}
+                  className="self-start shrink-0 touch-chip text-[10px] font-extrabold px-3 py-2 rounded-full bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200 hover:bg-emerald-100 transition-colors disabled:opacity-50"
                 >
-                  ✓ Tout marquer payé
+                  {settling ? 'Enregistrement…' : '✓ Tout marquer payé'}
                 </button>
               )}
             </div>
@@ -680,8 +754,22 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
                       </div>
                       <button
                         type="button"
-                        onClick={() => markSettlementPaid(st)}
-                        className="mt-2.5 flex w-full min-h-10 items-center justify-center gap-1.5 rounded-xl bg-zinc-900 py-2.5 text-[10px] font-extrabold text-white transition-all hover:bg-zinc-800"
+                        disabled={settling}
+                        onClick={() => {
+                          void (async () => {
+                            setSettling(true);
+                            try {
+                              await markSettlementPaid(st);
+                            } catch (err) {
+                              setActionError(
+                                err instanceof Error ? err.message : 'Impossible d’enregistrer le règlement.'
+                              );
+                            } finally {
+                              setSettling(false);
+                            }
+                          })();
+                        }}
+                        className="mt-2.5 flex w-full min-h-10 items-center justify-center gap-1.5 rounded-xl bg-zinc-900 py-2.5 text-[10px] font-extrabold text-white transition-all hover:bg-zinc-800 disabled:opacity-50"
                       >
                         <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
                         <span className="truncate">{displayName(st.fromFriendId)} a payé</span>
@@ -993,13 +1081,25 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
             </button>
             <button
               type="button"
+              disabled={saving}
               onClick={() => {
-                if (expenseToDelete) onDeleteExpense(expenseToDelete.id);
-                setExpenseToDelete(null);
+                void (async () => {
+                  if (!expenseToDelete) return;
+                  setSaving(true);
+                  try {
+                    await onDeleteExpense(expenseToDelete.id);
+                    setExpenseToDelete(null);
+                  } catch (err) {
+                    setActionError(err instanceof Error ? err.message : 'Impossible de supprimer.');
+                    setFormError(err instanceof Error ? err.message : 'Impossible de supprimer.');
+                  } finally {
+                    setSaving(false);
+                  }
+                })();
               }}
-              className="flex-[1.3] rounded-xl bg-red-600 px-4 py-3 text-xs font-bold text-white hover:bg-red-500"
+              className="flex-[1.3] rounded-xl bg-red-600 px-4 py-3 text-xs font-bold text-white hover:bg-red-500 disabled:opacity-50"
             >
-              Oui, supprimer
+              {saving ? 'Suppression…' : 'Oui, supprimer'}
             </button>
           </div>
         </div>
@@ -1015,15 +1115,17 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
         subtitle="Montant · partage · équipage"
         icon={<Receipt className="h-4 w-4" />}
         titleId="expense-form-title"
-        onSubmit={handleFormSubmit}
+        onSubmit={(e) => void handleFormSubmit(e)}
         footer={
           <FormModalFooter
             onCancel={() => {
+              if (saving) return;
               setShowFormModal(false);
               resetForm();
             }}
             submitLabel={editingExpense ? 'Enregistrer' : 'Ajouter'}
             canSubmit={canSubmitExpense}
+            saving={saving}
           />
         }
       >
@@ -1058,17 +1160,9 @@ export const TricountBudget: React.FC<TricountBudgetProps> = ({
                 <span className="text-[9px] font-bold uppercase tracking-wider text-white/45">
                   Devise
                 </span>
-                <select
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
-                  className="mt-0.5 w-full rounded-md border-0 bg-white/10 px-1.5 py-1 text-[11px] font-bold text-white focus:outline-hidden"
-                >
-                  {CURRENCIES.map((item) => (
-                    <option key={item.code} value={item.code} className="text-zinc-900">
-                      {item.code}
-                    </option>
-                  ))}
-                </select>
+                <div className="mt-0.5 rounded-md border-0 bg-white/10 px-1.5 py-1 text-[11px] font-bold text-white">
+                  EUR
+                </div>
               </label>
               <label className="block w-[7.5rem] shrink-0">
                 <span className="text-[9px] font-bold uppercase tracking-wider text-white/45">

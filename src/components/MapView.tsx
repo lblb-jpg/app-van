@@ -60,8 +60,7 @@ interface MapViewProps {
     emoji?: string;
   } | null;
   mapVisible?: boolean;
-  onAddPoi: (newPoi: Omit<Poi, 'id' | 'createdAt'>) => void;
-  onAddPhoto: (newPhoto: Omit<TripPhoto, 'id'>) => void;
+  onAddPoi: (newPoi: Omit<Poi, 'id' | 'createdAt'>) => void | Promise<void>;
 }
 
 const TILE_LAYERS = {
@@ -157,6 +156,7 @@ export const MapView: React.FC<MapViewProps> = ({
   const [newPoiType, setNewPoiType] = useState<PoiType>('van_spot');
   const [newPoiAmenities, setNewPoiAmenities] = useState<string[]>(['eau', 'gratuit']);
   const [formError, setFormError] = useState('');
+  const [savingPoi, setSavingPoi] = useState(false);
 
   useEffect(() => {
     pickingLocationRef.current = isPickingLocation;
@@ -573,7 +573,7 @@ export const MapView: React.FC<MapViewProps> = ({
     setFormError('');
   };
 
-  const handleCreatePoiSubmit = (e: React.FormEvent) => {
+  const handleCreatePoiSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
     if (!newPoiTitle.trim()) {
@@ -585,19 +585,25 @@ export const MapView: React.FC<MapViewProps> = ({
       return;
     }
 
-    onAddPoi({
-      title: newPoiTitle.trim(),
-      description: newPoiDesc.trim(),
-      type: newPoiType,
-      lat: clickCoords.lat,
-      lng: clickCoords.lng,
-      createdByFriendId: authorId,
-      amenities: newPoiAmenities,
-    });
-
-    resetPoiForm();
-    setShowAddModal(false);
-    setIsPickingLocation(false);
+    setSavingPoi(true);
+    try {
+      await onAddPoi({
+        title: newPoiTitle.trim(),
+        description: newPoiDesc.trim(),
+        type: newPoiType,
+        lat: clickCoords.lat,
+        lng: clickCoords.lng,
+        createdByFriendId: authorId,
+        amenities: newPoiAmenities,
+      });
+      resetPoiForm();
+      setShowAddModal(false);
+      setIsPickingLocation(false);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Impossible d’ajouter ce spot.');
+    } finally {
+      setSavingPoi(false);
+    }
   };
 
   const toggleAmenity = (item: string) => {
@@ -787,12 +793,13 @@ export const MapView: React.FC<MapViewProps> = ({
           subtitle="Nom · type · emplacement"
           icon={<MapPin className="h-4 w-4" />}
           titleId="add-poi-title"
-          onSubmit={handleCreatePoiSubmit}
+          onSubmit={(e) => void handleCreatePoiSubmit(e)}
           footer={
             <FormModalFooter
               onCancel={closeAddPoiForm}
               submitLabel="Enregistrer"
               canSubmit={Boolean(newPoiTitle.trim() && clickCoords)}
+              saving={savingPoi}
             />
           }
         >

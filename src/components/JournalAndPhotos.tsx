@@ -253,9 +253,9 @@ interface JournalAndPhotosProps {
   currentFriendId: string;
   authorId: string;
   userLocation: GpsPoint | null;
-  onAddNote: (newNote: Omit<JournalNote, 'id'>) => void;
-  onAddPhoto: (newPhoto: Omit<TripPhoto, 'id'>) => void;
-  onDeletePhoto: (id: string) => void;
+  onAddNote: (newNote: Omit<JournalNote, 'id'>) => void | Promise<void>;
+  onAddPhoto: (newPhoto: Omit<TripPhoto, 'id'>) => void | Promise<void>;
+  onDeletePhoto: (id: string) => void | Promise<void>;
 }
 
 export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
@@ -279,6 +279,8 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null);
   const [selectedVideoAlbumId, setSelectedVideoAlbumId] = useState<string | null>(null);
   const [mediaUploadError, setMediaUploadError] = useState('');
+  const [formError, setFormError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   // New Note Form State
   const [noteTitle, setNoteTitle] = useState('');
@@ -299,73 +301,119 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
   const [videoLocation, setVideoLocation] = useState('');
   const [videoCoords, setVideoCoords] = useState<{ lat: number; lng: number } | null>(null);
 
-  const handleCreateNote = (e: React.FormEvent) => {
+  const gpsCoords =
+    userLocation && Number.isFinite(userLocation.lat) && Number.isFinite(userLocation.lng)
+      ? { lat: userLocation.lat, lng: userLocation.lng }
+      : null;
+
+  const openNoteModal = () => {
+    setFormError('');
+    setNoteCoords(gpsCoords);
+    setShowNoteModal(true);
+  };
+
+  const openPhotoModal = () => {
+    setFormError('');
+    setMediaUploadError('');
+    setPhotoCoords(gpsCoords);
+    setShowPhotoModal(true);
+  };
+
+  const openVideoModal = () => {
+    setFormError('');
+    setMediaUploadError('');
+    setVideoCoords(gpsCoords);
+    setShowVideoModal(true);
+  };
+
+  const handleCreateNote = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!noteTitle.trim() || !noteContent.trim()) return;
-
-    onAddNote({
-      title: noteTitle.trim(),
-      content: noteContent.trim(),
-      date: new Date().toISOString().split('T')[0],
-      friendId: authorId,
-      locationName: noteLocation.trim(),
-      lat: noteCoords?.lat,
-      lng: noteCoords?.lng,
-      photos: notePhotoUrl.trim() ? [notePhotoUrl.trim()] : []
-    });
-
-    setNoteTitle('');
-    setNoteContent('');
-    setNoteLocation('');
-    setNoteCoords(null);
-    setNotePhotoUrl('');
-    setShowNoteModal(false);
+    setFormError('');
+    setSaving(true);
+    try {
+      const coords = noteCoords ?? gpsCoords;
+      await onAddNote({
+        title: noteTitle.trim(),
+        content: noteContent.trim(),
+        date: new Date().toISOString().split('T')[0],
+        friendId: authorId,
+        locationName: noteLocation.trim(),
+        lat: coords?.lat,
+        lng: coords?.lng,
+        photos: notePhotoUrl.trim() ? [notePhotoUrl.trim()] : []
+      });
+      setNoteTitle('');
+      setNoteContent('');
+      setNoteLocation('');
+      setNoteCoords(null);
+      setNotePhotoUrl('');
+      setShowNoteModal(false);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Impossible d’enregistrer la note.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleCreatePhoto = (e: React.FormEvent) => {
+  const handleCreatePhoto = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!photoUrlInput.trim()) return;
-
-    onAddPhoto({
-      url: photoUrlInput.trim(),
-      caption: photoCaption.trim(),
-      date: new Date().toISOString().split('T')[0],
-      friendId: authorId,
-      locationName: photoLocation.trim(),
-      lat: photoCoords?.lat,
-      lng: photoCoords?.lng,
-      mediaType: 'photo',
-    });
-
-    setPhotoUrlInput('');
-    setPhotoCaption('');
-    setPhotoLocation('');
-    setPhotoCoords(null);
-    setMediaUploadError('');
-    setShowPhotoModal(false);
+    setFormError('');
+    setSaving(true);
+    try {
+      const coords = photoCoords ?? gpsCoords;
+      await onAddPhoto({
+        url: photoUrlInput.trim(),
+        caption: photoCaption.trim(),
+        date: new Date().toISOString().split('T')[0],
+        friendId: authorId,
+        locationName: photoLocation.trim(),
+        lat: coords?.lat,
+        lng: coords?.lng,
+        mediaType: 'photo',
+      });
+      setPhotoUrlInput('');
+      setPhotoCaption('');
+      setPhotoLocation('');
+      setPhotoCoords(null);
+      setMediaUploadError('');
+      setShowPhotoModal(false);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Impossible d’ajouter la photo.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleCreateVideo = (e: React.FormEvent) => {
+  const handleCreateVideo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!videoUrlInput.trim()) return;
-
-    onAddPhoto({
-      url: videoUrlInput.trim(),
-      caption: videoCaption.trim(),
-      date: new Date().toISOString().split('T')[0],
-      friendId: authorId,
-      locationName: videoLocation.trim(),
-      lat: videoCoords?.lat,
-      lng: videoCoords?.lng,
-      mediaType: 'video',
-    });
-
-    setVideoUrlInput('');
-    setVideoCaption('');
-    setVideoLocation('');
-    setVideoCoords(null);
-    setMediaUploadError('');
-    setShowVideoModal(false);
+    setFormError('');
+    setSaving(true);
+    try {
+      const coords = videoCoords ?? gpsCoords;
+      await onAddPhoto({
+        url: videoUrlInput.trim(),
+        caption: videoCaption.trim(),
+        date: new Date().toISOString().split('T')[0],
+        friendId: authorId,
+        locationName: videoLocation.trim(),
+        lat: coords?.lat,
+        lng: coords?.lng,
+        mediaType: 'video',
+      });
+      setVideoUrlInput('');
+      setVideoCaption('');
+      setVideoLocation('');
+      setVideoCoords(null);
+      setMediaUploadError('');
+      setShowVideoModal(false);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Impossible d’ajouter la vidéo.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const closeNoteModal = () => {
@@ -523,13 +571,9 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
           <button
             type="button"
             onClick={() => {
-              if (activeTab === 'journal') {
-                setShowNoteModal(true);
-              } else if (activeTab === 'videos') {
-                setShowVideoModal(true);
-              } else {
-                setShowPhotoModal(true);
-              }
+              if (activeTab === 'journal') openNoteModal();
+              else if (activeTab === 'videos') openVideoModal();
+              else openPhotoModal();
             }}
             className="min-h-11 w-full sm:w-auto justify-center rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white shadow-xs transition-all font-bold text-xs flex items-center gap-1.5 px-4 py-2.5"
           >
@@ -816,12 +860,13 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
         subtitle="Titre · lieu · récit"
         icon={<BookOpen className="h-4 w-4" />}
         titleId="add-note-title"
-        onSubmit={handleCreateNote}
+        onSubmit={(e) => void handleCreateNote(e)}
         footer={
           <FormModalFooter
             onCancel={closeNoteModal}
             submitLabel="Publier"
             canSubmit={Boolean(noteTitle.trim() && noteContent.trim())}
+            saving={saving}
           />
         }
       >
@@ -873,6 +918,11 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
               )}
             </CompactFormField>
           </CompactFormSection>
+          {formError && showNoteModal && (
+            <p className="rounded-lg border border-amber-100 bg-amber-50 px-2.5 py-1.5 text-[10px] font-semibold text-amber-800">
+              {formError}
+            </p>
+          )}
         </CompactFormRoot>
       </SimpleFormModal>
 
@@ -883,12 +933,13 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
         subtitle="Image · légende · lieu"
         icon={<Camera className="h-4 w-4" />}
         titleId="add-photo-title"
-        onSubmit={handleCreatePhoto}
+        onSubmit={(e) => void handleCreatePhoto(e)}
         footer={
           <FormModalFooter
             onCancel={closePhotoModal}
             submitLabel="Ajouter"
             canSubmit={Boolean(photoUrlInput.trim())}
+            saving={saving}
           />
         }
       >
@@ -934,6 +985,11 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
               />
             </CompactFormField>
           </CompactFormSection>
+          {formError && showPhotoModal && (
+            <p className="rounded-lg border border-amber-100 bg-amber-50 px-2.5 py-1.5 text-[10px] font-semibold text-amber-800">
+              {formError}
+            </p>
+          )}
         </CompactFormRoot>
       </SimpleFormModal>
 
@@ -944,12 +1000,13 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
         subtitle="Fichier · légende · lieu"
         icon={<Video className="h-4 w-4" />}
         titleId="add-video-title"
-        onSubmit={handleCreateVideo}
+        onSubmit={(e) => void handleCreateVideo(e)}
         footer={
           <FormModalFooter
             onCancel={closeVideoModal}
             submitLabel="Ajouter"
             canSubmit={Boolean(videoUrlInput.trim())}
+            saving={saving}
           />
         }
       >
@@ -992,6 +1049,11 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
               />
             </CompactFormField>
           </CompactFormSection>
+          {formError && showVideoModal && (
+            <p className="rounded-lg border border-amber-100 bg-amber-50 px-2.5 py-1.5 text-[10px] font-semibold text-amber-800">
+              {formError}
+            </p>
+          )}
         </CompactFormRoot>
       </SimpleFormModal>
 
@@ -1117,6 +1179,9 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
             <p className="mt-1.5 text-[12px] font-medium leading-relaxed text-[#68756d]">
               « {photoToDelete?.caption?.trim() || (photoToDelete && isVideoMedia(photoToDelete) ? 'Vidéo de route' : 'Souvenir de route')} » sera supprimée de la galerie pour tout l’équipage.
             </p>
+            {formError && (
+              <p className="mt-2 text-[11px] font-semibold text-amber-800">{formError}</p>
+            )}
           </div>
           <div className="flex gap-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
             <button
@@ -1128,16 +1193,27 @@ export const JournalAndPhotos: React.FC<JournalAndPhotosProps> = ({
             </button>
             <button
               type="button"
+              disabled={saving}
               onClick={() => {
-                if (!photoToDelete) return;
-                const id = photoToDelete.id;
-                onDeletePhoto(id);
-                setPhotoToDelete(null);
-                if (selectedPhotoPreview?.id === id) setSelectedPhotoPreview(null);
+                void (async () => {
+                  if (!photoToDelete) return;
+                  const id = photoToDelete.id;
+                  setSaving(true);
+                  setFormError('');
+                  try {
+                    await onDeletePhoto(id);
+                    setPhotoToDelete(null);
+                    if (selectedPhotoPreview?.id === id) setSelectedPhotoPreview(null);
+                  } catch (err) {
+                    setFormError(err instanceof Error ? err.message : 'Impossible de supprimer.');
+                  } finally {
+                    setSaving(false);
+                  }
+                })();
               }}
-              className="min-h-11 flex-[1.2] rounded-xl bg-red-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-red-500"
+              className="min-h-11 flex-[1.2] rounded-xl bg-red-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-red-500 disabled:opacity-50"
             >
-              Oui, supprimer
+              {saving ? 'Suppression…' : 'Oui, supprimer'}
             </button>
           </div>
         </div>

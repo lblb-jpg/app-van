@@ -7,8 +7,6 @@ import {
   Receipt,
   User,
   Download,
-  Wifi,
-  WifiOff,
   Plus,
   Share,
   X,
@@ -16,12 +14,9 @@ import {
   MapPin,
   AlertTriangle,
   BedDouble,
-  Menu,
   RefreshCw,
-  MoreVertical,
 } from 'lucide-react';
 import { TabType, Friend } from '../types';
-import { useHistoryBack } from '../lib/historyBack';
 import { isAndroidDevice, isIosDevice, isMobileDevice, isStandalonePwa } from '../lib/pwa';
 import type { GeoStatus } from '../services/geolocation';
 import { wasGeoGranted } from '../lib/permissions';
@@ -50,18 +45,27 @@ const NAV_ITEMS: {
   label: string;
   hint: string;
   icon: React.ReactNode;
-  badge?: boolean;
 }[] = [
-  { id: 'map', label: 'Carte', hint: 'Spots & itinéraire', icon: <Map className="h-5 w-5" /> },
-  { id: 'sleep', label: 'Dormir', hint: 'Spots bivouac', icon: <BedDouble className="h-5 w-5" /> },
-  { id: 'waypoints', label: 'Étapes', hint: 'Arrêts du voyage', icon: <Milestone className="h-5 w-5" /> },
-  { id: 'journal', label: 'Journal', hint: 'Notes & photos', icon: <BookOpen className="h-5 w-5" /> },
-  { id: 'budget', label: 'VanPay', hint: 'Budget équipage', icon: <Receipt className="h-5 w-5" /> },
-  { id: 'profile', label: 'Profil', hint: 'Photo & prénom', icon: <User className="h-5 w-5" /> },
+  { id: 'map', label: 'Carte', hint: 'Spots & itinéraire', icon: <Map className="h-[1.15rem] w-[1.15rem]" strokeWidth={2.25} /> },
+  { id: 'sleep', label: 'Dormir', hint: 'Spots bivouac', icon: <BedDouble className="h-[1.15rem] w-[1.15rem]" strokeWidth={2.25} /> },
+  { id: 'waypoints', label: 'Étapes', hint: 'Arrêts du voyage', icon: <Milestone className="h-[1.15rem] w-[1.15rem]" strokeWidth={2.25} /> },
+  { id: 'journal', label: 'Journal', hint: 'Notes & photos', icon: <BookOpen className="h-[1.15rem] w-[1.15rem]" strokeWidth={2.25} /> },
+  { id: 'budget', label: 'VanPay', hint: 'Budget équipage', icon: <Receipt className="h-[1.15rem] w-[1.15rem]" strokeWidth={2.25} /> },
+  { id: 'profile', label: 'Profil', hint: 'Photo & prénom', icon: <User className="h-[1.15rem] w-[1.15rem]" strokeWidth={2.25} /> },
 ];
 
 function tabLabel(tab: TabType) {
   return NAV_ITEMS.find((item) => item.id === tab)?.label ?? 'Vanlife Club';
+}
+
+function MoreIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden>
+      <circle cx="12" cy="5" r="1.75" />
+      <circle cx="12" cy="12" r="1.75" />
+      <circle cx="12" cy="19" r="1.75" />
+    </svg>
+  );
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
@@ -71,7 +75,6 @@ export const Navigation: React.FC<NavigationProps> = ({
   currentFriendId,
   setCurrentFriendId,
   geoStatus,
-  hasUserLocation = false,
   booting = false,
   isRefreshing = false,
   syncError = '',
@@ -80,7 +83,6 @@ export const Navigation: React.FC<NavigationProps> = ({
   immersive = false,
 }) => {
   const status: GeoStatus = geoStatus ?? { state: 'idle' };
-  const [menuOpen, setMenuOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallHint, setShowInstallHint] = useState(false);
@@ -88,8 +90,6 @@ export const Navigation: React.FC<NavigationProps> = ({
   const [installHelpPlatform, setInstallHelpPlatform] = useState<'ios' | 'android'>('ios');
   const [dismissedGeoError, setDismissedGeoError] = useState('');
   const standalone = isStandalonePwa();
-
-  useHistoryBack(menuOpen, () => setMenuOpen(false));
 
   const currentFriend = friends.find((f) => f.id === currentFriendId) || friends[0];
   const hasFriends = Boolean(currentFriend);
@@ -109,60 +109,51 @@ export const Navigation: React.FC<NavigationProps> = ({
   }, [status]);
 
   useEffect(() => {
-    if (!menuOpen) return;
-    const html = document.documentElement;
-    const prev = html.style.overflow;
-    html.style.overflow = 'hidden';
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
     return () => {
-      html.style.overflow = prev;
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
     };
-  }, [menuOpen]);
+  }, []);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    const dismissed = localStorage.getItem(INSTALL_DISMISS_KEY) === '1';
-    let androidHintTimer: number | undefined;
-
-    if (!standalone && !dismissed && isMobileDevice()) {
-      if (isIosDevice()) {
+    const onBeforeInstall = (event: Event) => {
+      event.preventDefault();
+      setDeferredPrompt(event);
+      try {
+        if (localStorage.getItem(INSTALL_DISMISS_KEY) !== '1') setShowInstallHint(true);
+      } catch {
         setShowInstallHint(true);
-      } else if (isAndroidDevice()) {
-        // Chrome Android may delay beforeinstallprompt — nudge after a short visit.
-        androidHintTimer = window.setTimeout(() => setShowInstallHint(true), 4_000);
       }
+    };
+    window.addEventListener('beforeinstallprompt', onBeforeInstall);
+    return () => window.removeEventListener('beforeinstallprompt', onBeforeInstall);
+  }, []);
+
+  useEffect(() => {
+    if (standalone) return;
+    if (!isMobileDevice()) return;
+    try {
+      if (localStorage.getItem(INSTALL_DISMISS_KEY) === '1') return;
+    } catch {
+      // ignore
     }
-
-    const handleBeforeInstall = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-      if (androidHintTimer) window.clearTimeout(androidHintTimer);
-      if (!dismissed && !standalone) setShowInstallHint(true);
-    };
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
-    window.addEventListener('appinstalled', () => {
-      if (androidHintTimer) window.clearTimeout(androidHintTimer);
-      setShowInstallHint(false);
-      setDeferredPrompt(null);
-      localStorage.setItem(INSTALL_DISMISS_KEY, '1');
-    });
-
-    return () => {
-      if (androidHintTimer) window.clearTimeout(androidHintTimer);
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
-    };
-  }, [standalone]);
+    const timer = window.setTimeout(() => {
+      if (!deferredPrompt) setShowInstallHint(true);
+    }, 4500);
+    return () => window.clearTimeout(timer);
+  }, [standalone, deferredPrompt]);
 
   const dismissInstall = () => {
     setShowInstallHint(false);
-    setShowManualInstallHelp(false);
-    localStorage.setItem(INSTALL_DISMISS_KEY, '1');
+    try {
+      localStorage.setItem(INSTALL_DISMISS_KEY, '1');
+    } catch {
+      // ignore
+    }
   };
 
   const handleInstallPwa = async () => {
@@ -170,99 +161,35 @@ export const Navigation: React.FC<NavigationProps> = ({
       deferredPrompt.prompt();
       await deferredPrompt.userChoice;
       setDeferredPrompt(null);
-      setShowInstallHint(false);
-      localStorage.setItem(INSTALL_DISMISS_KEY, '1');
+      dismissInstall();
       return;
     }
-    setInstallHelpPlatform(isAndroidDevice() ? 'android' : 'ios');
+    setInstallHelpPlatform(isAndroidDevice() ? 'android' : isIosDevice() ? 'ios' : 'ios');
     setShowManualInstallHelp(true);
   };
 
   const installHelpSteps =
     installHelpPlatform === 'android'
       ? [
-          { icon: <MoreVertical className="h-4 w-4" />, text: 'Ouvre le menu Chrome (⋮ en haut à droite)' },
-          { icon: <Download className="h-4 w-4" />, text: 'Choisis « Installer l\u2019application » ou « Ajouter à l\u2019écran d\u2019accueil »' },
-          { icon: <Plus className="h-4 w-4" />, text: 'Valide — Vanlife Club apparaît sur ton écran d\u2019accueil' },
+          { icon: <MoreIcon />, text: 'Ouvre le menu du navigateur (⋮)' },
+          { icon: <Download className="h-4 w-4" />, text: 'Choisis « Installer l’application »' },
+          { icon: <Plus className="h-4 w-4" />, text: 'Confirme — Vanlife Club s’ajoute à l’accueil' },
         ]
       : [
-          { icon: <Share className="h-4 w-4" />, text: 'Touche Partager (carré avec flèche)' },
-          { icon: <Plus className="h-4 w-4" />, text: 'Choisis « Sur l\u2019écran d\u2019accueil »' },
-          { icon: <Download className="h-4 w-4" />, text: 'Valide — l\u2019icône Vanlife Club apparaît' },
+          { icon: <Share className="h-4 w-4" />, text: 'Appuie sur Partager dans Safari' },
+          { icon: <Plus className="h-4 w-4" />, text: 'Choisis « Sur l’écran d’accueil »' },
+          { icon: <Download className="h-4 w-4" />, text: 'Valide — l’icône Vanlife Club apparaît' },
         ];
-
-  const navigateTo = (tab: TabType) => {
-    setActiveTab(tab);
-    setMenuOpen(false);
-  };
-
-  const menu = menuOpen && (
-    <div className="van-menu" role="presentation">
-      <button
-        type="button"
-        className="van-menu__backdrop"
-        aria-label="Fermer le menu"
-        onClick={() => setMenuOpen(false)}
-      />
-      <aside className="van-menu__panel" role="dialog" aria-modal="true" aria-label="Menu principal">
-        <div className="van-menu__head">
-          <div>
-            <p className="van-menu__kicker">Navigation</p>
-            <h2 className="van-menu__title">Vanlife Club</h2>
-          </div>
-          <button
-            type="button"
-            onClick={() => setMenuOpen(false)}
-            className="van-menu__close"
-            aria-label="Fermer"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <nav className="van-menu__list" aria-label="Sections de l'application">
-          {NAV_ITEMS.map((item) => {
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => navigateTo(item.id)}
-                aria-current={isActive ? 'page' : undefined}
-                className={`van-menu__item ${isActive ? 'is-active' : ''}`}
-              >
-                <span className="van-menu__item-icon">{item.icon}</span>
-                <span className="van-menu__item-text">
-                  <span className="van-menu__item-label">{item.label}</span>
-                  <span className="van-menu__item-hint">{item.hint}</span>
-                </span>
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="van-menu__foot">
-          <div className="van-menu__status">
-            {isOnline ? (
-              <span className="text-[#36866b]"><Wifi className="inline h-3.5 w-3.5" /> En ligne</span>
-            ) : (
-              <span className="text-amber-700"><WifiOff className="inline h-3.5 w-3.5" /> Hors-ligne</span>
-            )}
-            {hasUserLocation && (
-              <span className="text-[#36866b]"><MapPin className="inline h-3.5 w-3.5" /> GPS actif</span>
-            )}
-          </div>
-        </div>
-      </aside>
-    </div>
-  );
 
   return (
     <>
       <header className={`van-header ${immersive ? 'van-header--immersive' : ''}`}>
         <div className={`van-header__inner ${immersive ? 'van-header__inner--immersive' : ''}`}>
           <div className="van-header__title min-w-0 flex-1">
-            <p className="van-header__kicker">Vanlife Club</p>
+            <p className="van-header__kicker">
+              Vanlife Club
+              {!isOnline && <span className="ml-1.5 text-amber-700">· hors-ligne</span>}
+            </p>
             <h1 className="van-header__page truncate">{tabLabel(activeTab)}</h1>
           </div>
 
@@ -278,8 +205,8 @@ export const Navigation: React.FC<NavigationProps> = ({
               }}
               disabled={isRefreshing || booting}
               className="van-header__icon-btn"
-              title="Rafraîchir l\u2019application"
-              aria-label="Rafraîchir l\u2019application"
+              title="Rafraîchir l’application"
+              aria-label="Rafraîchir l’application"
             >
               <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
             </button>
@@ -288,8 +215,8 @@ export const Navigation: React.FC<NavigationProps> = ({
                 type="button"
                 onClick={() => void handleInstallPwa()}
                 className="van-header__icon-btn"
-                title="Installer sur l\u2019écran d\u2019accueil"
-                aria-label="Installer l\u2019application"
+                title="Installer sur l’écran d’accueil"
+                aria-label="Installer l’application"
               >
                 <Download className="h-4 w-4" />
               </button>
@@ -297,7 +224,7 @@ export const Navigation: React.FC<NavigationProps> = ({
             <div className="van-header__user">
               <button
                 type="button"
-                onClick={() => navigateTo('profile')}
+                onClick={() => setActiveTab('profile')}
                 className="van-header__avatar-btn"
                 aria-label="Ouvrir mon profil"
               >
@@ -311,7 +238,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                 value={currentFriendId}
                 onChange={(e) => setCurrentFriendId(e.target.value)}
                 disabled={!hasFriends}
-                aria-label="Changer d\u2019utilisateur"
+                aria-label="Changer d’utilisateur"
                 className="max-w-[5rem] cursor-pointer appearance-none bg-transparent pl-1 text-xs font-bold text-[#17352b] focus:outline-hidden sm:max-w-[7rem]"
               >
                 {!hasFriends && <option value={currentFriendId}>…</option>}
@@ -321,16 +248,6 @@ export const Navigation: React.FC<NavigationProps> = ({
               </select>
             </div>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setMenuOpen(true)}
-            className="van-burger"
-            aria-label="Ouvrir le menu"
-            aria-expanded={menuOpen}
-          >
-            <Menu className="h-5 w-5" />
-          </button>
         </div>
 
         {(booting || isRefreshing || status.state === 'locating') && (
@@ -341,8 +258,6 @@ export const Navigation: React.FC<NavigationProps> = ({
         )}
       </header>
 
-      {menuOpen && typeof document !== 'undefined' && createPortal(menu, document.body)}
-
       {showInstallHint && !standalone && (
         <div className="van-install-banner">
           <div className="van-install-sheet flex flex-wrap items-center gap-3 rounded-2xl px-3.5 py-3">
@@ -352,7 +267,7 @@ export const Navigation: React.FC<NavigationProps> = ({
             <div className="min-w-0 flex-1">
               <p className="text-xs font-extrabold text-[#17352b]">Installer Vanlife Club</p>
               <p className="text-[0.7rem] font-medium leading-snug text-[#6f786f]">
-                Sur l\u2019écran d\u2019accueil · GPS hors-ligne
+                Sur l’écran d’accueil · GPS hors-ligne
               </p>
             </div>
             <button
@@ -373,11 +288,11 @@ export const Navigation: React.FC<NavigationProps> = ({
         <div className="space-y-4 p-5 sm:p-6">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h3 className="text-base font-extrabold text-[#17352b]">Ajouter à l\u2019écran d\u2019accueil</h3>
+              <h3 className="text-base font-extrabold text-[#17352b]">Ajouter à l’écran d’accueil</h3>
               <p className="mt-1 text-[0.75rem] font-medium leading-relaxed text-[#6f786f]">
                 {installHelpPlatform === 'android'
-                  ? 'Installe l\u2019app pour un accès rapide, plein écran et GPS optimisé.'
-                  : 'Pour l\u2019utiliser comme une vraie app mobile.'}
+                  ? 'Installe l’app pour un accès rapide, plein écran et GPS optimisé.'
+                  : 'Pour l’utiliser comme une vraie app mobile.'}
               </p>
             </div>
             <button type="button" onClick={() => setShowManualInstallHelp(false)} className="touch-target min-h-10 min-w-10 text-[#6f786f]">
@@ -424,6 +339,35 @@ export const Navigation: React.FC<NavigationProps> = ({
           </div>
         </div>
       )}
+
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <nav
+            className={`van-tabbar ${immersive ? 'van-tabbar--immersive' : ''}`}
+            aria-label="Navigation principale"
+          >
+            <div className="van-tabbar__inner">
+              {NAV_ITEMS.map((item) => {
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setActiveTab(item.id)}
+                    aria-current={isActive ? 'page' : undefined}
+                    aria-label={item.label}
+                    title={item.hint}
+                    className={`van-tabbar__item ${isActive ? 'is-active' : ''}`}
+                  >
+                    <span className="van-tabbar__icon">{item.icon}</span>
+                    <span className="van-tabbar__label">{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </nav>,
+          document.body
+        )}
     </>
   );
 };

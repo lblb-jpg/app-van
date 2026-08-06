@@ -95,6 +95,7 @@ type FormModalFooterProps = {
   onCancel: () => void;
   submitLabel: string;
   canSubmit?: boolean;
+  saving?: boolean;
   submitTone?: 'forest' | 'sunset';
 };
 
@@ -102,6 +103,7 @@ export function FormModalFooter({
   onCancel,
   submitLabel,
   canSubmit = true,
+  saving = false,
   submitTone = 'forest',
 }: FormModalFooterProps) {
   const submitClass =
@@ -114,17 +116,18 @@ export function FormModalFooter({
       <button
         type="button"
         onClick={onCancel}
-        className="min-h-9 rounded-lg px-3 text-[11px] font-bold text-[#68756d] hover:bg-[#17352b]/5"
+        disabled={saving}
+        className="min-h-9 rounded-lg px-3 text-[11px] font-bold text-[#68756d] hover:bg-[#17352b]/5 disabled:opacity-40"
       >
         Annuler
       </button>
       <button
         type="submit"
-        disabled={!canSubmit}
+        disabled={!canSubmit || saving}
         className={`ml-auto flex min-h-9 flex-1 items-center justify-center gap-1 rounded-lg px-3 text-[11px] font-extrabold text-white transition-all disabled:cursor-not-allowed disabled:opacity-40 ${submitClass}`}
       >
         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-        {submitLabel}
+        {saving ? 'Enregistrement…' : submitLabel}
       </button>
     </div>
   );

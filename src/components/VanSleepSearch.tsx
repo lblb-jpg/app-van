@@ -27,7 +27,7 @@ import { searchVanSleepSpots, suggestFrenchPlaces } from '../services/vanSpots';
 interface VanSleepSearchProps {
   onSelectOnMap: (lat: number, lng: number, label?: string, emoji?: string) => void;
   onSpotsChange?: (spots: VanSleepSpot[]) => void;
-  onSaveSpot: (spot: VanSleepSpot) => void;
+  onSaveSpot: (spot: VanSleepSpot) => void | Promise<void>;
 }
 
 type Filter = 'recommended' | 'aires' | 'campings' | 'parkings' | 'free' | 'water' | 'all';
@@ -66,6 +66,8 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
   const [visibleCount, setVisibleCount] = useState(12);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [savedIds, setSavedIds] = useState<string[]>([]);
+  const [savingSpotId, setSavingSpotId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState('');
   const [recentSearches, setRecentSearches] = useState(readRecentSearches);
   const [suggestions, setSuggestions] = useState<FrancePlace[]>([]);
   const [suggesting, setSuggesting] = useState(false);
@@ -212,9 +214,18 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
     [result]
   );
 
-  const saveSpot = (spot: VanSleepSpot) => {
-    onSaveSpot(spot);
-    setSavedIds((items) => (items.includes(spot.id) ? items : [...items, spot.id]));
+  const saveSpot = async (spot: VanSleepSpot) => {
+    if (savingSpotId || savedIds.includes(spot.id)) return;
+    setSaveError('');
+    setSavingSpotId(spot.id);
+    try {
+      await onSaveSpot(spot);
+      setSavedIds((items) => (items.includes(spot.id) ? items : [...items, spot.id]));
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Impossible d’ajouter cette étape.');
+    } finally {
+      setSavingSpotId(null);
+    }
   };
 
   return (
@@ -379,6 +390,11 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {error}
         </div>
       )}
+      {saveError && (
+        <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {saveError}
+        </div>
+      )}
 
       {loading && (
         <div className="rounded-[2rem] border border-[#17352b]/10 bg-white/75 p-8 text-center shadow-sm">
@@ -502,13 +518,24 @@ export const VanSleepSearch: React.FC<VanSleepSearchProps> = ({ onSelectOnMap, o
                       </button>
                       <button
                         type="button"
-                        onClick={() => saveSpot(spot)}
-                        className={`flex min-h-11 items-center justify-center gap-1 rounded-xl py-2 text-[9px] font-extrabold ${
+                        disabled={savingSpotId === spot.id || savedIds.includes(spot.id)}
+                        onClick={() => void saveSpot(spot)}
+                        className={`flex min-h-11 items-center justify-center gap-1 rounded-xl py-2 text-[9px] font-extrabold disabled:opacity-70 ${
                           savedIds.includes(spot.id) ? 'bg-emerald-100 text-emerald-800' : 'bg-[#eb6c32] text-white'
                         }`}
                       >
-                        {savedIds.includes(spot.id) ? <Check className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
-                        {savedIds.includes(spot.id) ? 'Ajouté' : 'Étape'}
+                        {savingSpotId === spot.id ? (
+                          <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                        ) : savedIds.includes(spot.id) ? (
+                          <Check className="h-3.5 w-3.5" />
+                        ) : (
+                          <Sparkles className="h-3.5 w-3.5" />
+                        )}
+                        {savingSpotId === spot.id
+                          ? '…'
+                          : savedIds.includes(spot.id)
+                            ? 'Ajouté'
+                            : 'Étape'}
                       </button>
                     </div>
 

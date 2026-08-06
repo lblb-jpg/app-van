@@ -14,7 +14,7 @@ import type {
 } from '../types';
 import { inferMediaType } from '../lib/mediaUtils';
 import { CREW_DEFAULT_COLORS, resolveFriendAvatar } from '../lib/crewAvatars';
-import { ensureSupabaseSession, ensureCrewAccounts, getSupabaseClient, isCrewMemberName, markCrewBootstrapDone, shouldRunCrewBootstrap } from './supabase';
+import { ensureSupabaseSession, ensureCrewAccounts, getSupabaseClient, isCrewMemberName, markCrewBootstrapDone, shouldRunCrewBootstrap, CREW_MEMBER_NAMES, getStoredCrewUserMap } from './supabase';
 
 const TRIP_KEY = 'van_current_trip_id_v1';
 const CREW_INVITE_KEY = 'van_crew_invite_code_v1';
@@ -40,9 +40,17 @@ export function saveCrewInviteCode(code: string) {
 
 async function joinTripWithInvite(supabase: SupabaseClient, inviteCode: string) {
   const cleaned = inviteCode.trim().toUpperCase();
-  if (cleaned.length < 6) return null;
+  if (cleaned.length < 6) {
+    throw new Error('Code d’invitation invalide.');
+  }
   const { data, error } = await supabase.rpc('join_trip_by_code', { invite: cleaned });
-  if (error || !data) return null;
+  if (error) {
+    console.error('join_trip_by_code failed', error);
+    throw new Error(error.message || 'Impossible de rejoindre le voyage partagé.');
+  }
+  if (!data) {
+    throw new Error('Impossible de rejoindre le voyage partagé (réponse vide).');
+  }
   const tripId = String(data);
   localStorage.setItem(TRIP_KEY, tripId);
   return tripId;
@@ -239,14 +247,23 @@ type MemberLookup = {
 function asMemberId(
   friendId: string | undefined,
   fallbackUserId: string,
-  lookup: MemberLookup
+  lookup: MemberLookup,
+  options?: { allowFallback?: boolean }
 ) {
   if (friendId && isUuid(friendId) && lookup.memberIds.has(friendId)) return friendId;
   if (friendId) {
     const mapped = lookup.legacyIdToUserId.get(friendId.trim().toLowerCase());
-    if (mapped) return mapped;
+    if (mapped && lookup.memberIds.has(mapped)) return mapped;
   }
-  return fallbackUserId;
+  if (options?.allowFallback !== false && fallbackUserId && lookup.memberIds.has(fallbackUserId)) {
+    // Only allow silent fallback when no friendId was provided.
+    if (!friendId) return fallbackUserId;
+  }
+  if (!friendId) {
+    if (fallbackUserId) return fallbackUserId;
+    throw new Error('Membre équipage introuvable.');
+  }
+  throw new Error(`Membre équipage introuvable pour l’identifiant « ${friendId} ».`);
 }
 
 function buildSplitRows(
@@ -436,18 +453,16 @@ export async function bootstrapCloud(): Promise<CloudContext | null> {
   // Toujours tenter le voyage partagé en premier (évite les voyages dupliqués par profil).
   if (storedInvite) {
     const joinedTripId = await joinTripWithInvite(supabase, storedInvite);
-    if (joinedTripId) {
-      localStorage.setItem(TRIP_KEY, joinedTripId);
-      try {
-        const code = await getTripInviteCode({ supabase, user, tripId: joinedTripId });
-        saveCrewInviteCode(code);
-      } catch {
-        saveCrewInviteCode(upperInviteCode(joinedTripId));
-      }
-      const joinedCtx = { supabase, user, tripId: joinedTripId };
-      await ensureTripEditorMembership(joinedCtx);
-      return joinedCtx;
+    localStorage.setItem(TRIP_KEY, joinedTripId);
+    try {
+      const code = await getTripInviteCode({ supabase, user, tripId: joinedTripId });
+      saveCrewInviteCode(code);
+    } catch {
+      saveCrewInviteCode(upperInviteCode(joinedTripId));
     }
+    const joinedCtx = { supabase, user, tripId: joinedTripId };
+    await ensureTripEditorMembership(joinedCtx);
+    return joinedCtx;
   }
 
   let tripId = localStorage.getItem(TRIP_KEY);
@@ -460,14 +475,6 @@ export async function bootstrapCloud(): Promise<CloudContext | null> {
 
   if (!tripId) {
     tripId = await pickBestMembershipTrip(supabase, user.id);
-  }
-
-  if (!tripId && storedInvite) {
-    tripId = await joinTripWithInvite(supabase, storedInvite);
-  }
-
-  if (!tripId && storedInvite) {
-    throw new Error('Impossible de rejoindre le voyage partagé. Reconnecte-toi avec le profil Adel.');
   }
 
   if (!tripId) {
@@ -923,7 +930,13 @@ export async function insertExpense(ctx: CloudContext, expense: Omit<Expense, 'i
         splitRows.map((row) => ({ expense_id: data.id, user_id: row.user_id }))
       ));
     }
-    if (splitError) throw splitError;
+    if (splitError) {
+      await ctx.supabase.from('expenses').delete().eq('id', data.id).eq('trip_id', ctx.tripId);
+      throw splitError;
+    }
+  } else {
+    await ctx.supabase.from('expenses').delete().eq('id', data.id).eq('trip_id', ctx.tripId);
+    throw new Error('Aucun participant valide pour cette dépense.');
   }
 
   return mapExpenseRow({
@@ -980,7 +993,11 @@ export async function updateExpense(ctx: CloudContext, id: string, expense: Omit
   }
   if (error) throw error;
 
-  await ctx.supabase.from('expense_splits').delete().eq('expense_id', id);
+  const { error: deleteSplitsError } = await ctx.supabase
+    .from('expense_splits')
+    .delete()
+    .eq('expense_id', id);
+  if (deleteSplitsError) throw deleteSplitsError;
 
   if (splitRows.length) {
     const splitPayload = splitRows.map((row) => ({ expense_id: id, ...row }));
@@ -991,6 +1008,8 @@ export async function updateExpense(ctx: CloudContext, id: string, expense: Omit
       ));
     }
     if (splitError) throw splitError;
+  } else {
+    throw new Error('Aucun participant valide pour cette dépense.');
   }
 
   return mapExpenseRow({
@@ -1026,12 +1045,8 @@ async function uploadWaypointPhotos(ctx: CloudContext, photos: string[] | undefi
 }
 
 export async function insertWaypoint(ctx: CloudContext, waypoint: Omit<Waypoint, 'id'> & { id?: string }) {
-  let photoPaths: string[] = [];
-  try {
-    photoPaths = await uploadWaypointPhotos(ctx, waypoint.photos);
-  } catch (err) {
-    console.warn('Upload photos étape échoué (bucket manquant ?)', err);
-  }
+  const photoPaths =
+    waypoint.photos?.length ? await uploadWaypointPhotos(ctx, waypoint.photos) : [];
 
   const baseRow = {
     trip_id: ctx.tripId,
@@ -1080,11 +1095,12 @@ export async function deleteWaypoint(ctx: CloudContext, id: string) {
 }
 
 export async function reorderWaypoint(ctx: CloudContext, waypoints: Waypoint[]) {
-  // Unique (trip_id, position): move to temporary negative slots, then apply final order.
+  // Unique (trip_id, position) + check(position >= 0): park in high temp slots, then apply final order.
+  const TEMP_OFFSET = 100_000;
   for (let i = 0; i < waypoints.length; i++) {
     const { error } = await ctx.supabase
       .from('waypoints')
-      .update({ position: -(i + 1) })
+      .update({ position: TEMP_OFFSET + i })
       .eq('id', waypoints[i].id)
       .eq('trip_id', ctx.tripId);
     if (error) throw error;
@@ -1108,12 +1124,7 @@ export async function replaceWaypoints(ctx: CloudContext, waypoints: Omit<Waypoi
   const rowsWithPhotos = [];
   const rowsWithoutPhotos = [];
   for (const wp of waypoints) {
-    let photoPaths: string[] = [];
-    try {
-      photoPaths = await uploadWaypointPhotos(ctx, wp.photos);
-    } catch {
-      photoPaths = [];
-    }
+    const photoPaths = wp.photos?.length ? await uploadWaypointPhotos(ctx, wp.photos) : [];
     const base = {
       trip_id: ctx.tripId,
       position: wp.order,
@@ -1356,6 +1367,15 @@ async function loadMemberLookup(ctx: CloudContext): Promise<MemberLookup> {
     memberIds.add(userId);
     const name = ((row.profiles as { name?: string } | null)?.name || '').trim().toLowerCase();
     if (name) legacyIdToUserId.set(name, userId);
+  }
+
+  // Prefer stable Adel/Paul/Yanis → UUID map even after display-name customizations.
+  const crewMap = getStoredCrewUserMap();
+  for (const name of CREW_MEMBER_NAMES) {
+    const uuid = crewMap[name];
+    if (uuid && memberIds.has(uuid)) {
+      legacyIdToUserId.set(name.toLowerCase(), uuid);
+    }
   }
 
   for (const legacyId of ['adel', 'paul', 'yanis']) {
